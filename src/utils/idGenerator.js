@@ -1,0 +1,14 @@
+const CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+export function generateShortId(length = 6) {
+  let id = '';
+  for (let i = 0; i < length; i++) {
+    id += CHARS[Math.floor(Math.random() * CHARS.length)];
+  }
+  return id;
+}
+
+export function getShareUrl(id) {
+  const base = import.meta.env.VITE_APP_URL || window.location.origin;
+  return `${base}/l/${id}`;
+}
