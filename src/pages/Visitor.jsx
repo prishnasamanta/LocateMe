@@ -3,21 +3,16 @@ import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { getLocation } from '../services/locations';
 import { haversineDistance } from '../utils/haversine';
-import { bearing } from '../utils/bearing';
 import { computeProgress } from '../utils/helpers';
 import { useGeolocation } from '../hooks/useGeolocation';
-import { useWeather } from '../hooks/useWeather';
-import { useRoute, useDeviceInfo } from '../hooks/useDeviceInfo';
-import LiveMap from '../components/LiveMap';
-import DistanceCard from '../components/DistanceCard';
-import ETA from '../components/ETA';
-import ProgressBar from '../components/ProgressBar';
-import StatusIndicator from '../components/StatusIndicator';
-import Stats from '../components/Stats';
-import WeatherCard from '../components/WeatherCard';
+import { useDeviceInfo } from '../hooks/useDeviceInfo';
 import GlassCard from '../components/GlassCard';
+import CoverageCard from '../components/CoverageCard';
+import ProgressBar from '../components/ProgressBar';
+import VisitorDeviceStats from '../components/VisitorDeviceStats';
 import ArrivalInstructions from '../components/ArrivalInstructions';
 import { publishVisitorPosition, resetPublishThrottle } from '../services/visitorTracking';
+import { getVisitorDisplayName, setVisitorDisplayName } from '../utils/deviceId';
 
 export default function Visitor() {
   const { id } = useParams();
@@ -28,8 +23,7 @@ export default function Visitor() {
   const [loadError, setLoadError] = useState(null);
   const [tracking, setTracking] = useState(false);
   const [distanceKm, setDistanceKm] = useState(null);
-  const [prevDistanceKm, setPrevDistanceKm] = useState(null);
-  const [bearingDeg, setBearingDeg] = useState(null);
+  const [visitorName, setVisitorNameState] = useState(getVisitorDisplayName());
   const initialDistanceRef = useRef(null);
 
   const {
@@ -41,42 +35,23 @@ export default function Visitor() {
     requestPermission,
   } = useGeolocation(tracking);
 
-  const { weather, sunTimes, loading: weatherLoading } = useWeather(
-    destination?.lat,
-    destination?.lng
-  );
-  const { route } = useRoute(
-    position ? { lat: position.lat, lng: position.lng } : null,
-    destination ? { lat: destination.lat, lng: destination.lng } : null
-  );
   const { battery, network } = useDeviceInfo();
 
   useEffect(() => {
     const encodedPayload = searchParams.get('d');
     getLocation(id, encodedPayload)
       .then((loc) => {
-        if (!loc) {
-          setNotFound(true);
-        } else {
-          setDestination(loc);
-        }
+        if (!loc) setNotFound(true);
+        else setDestination(loc);
       })
-      .catch((err) => {
-        setLoadError(err.message || 'Unable to load destination');
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+      .catch((err) => setLoadError(err.message || 'Unable to load destination'))
+      .finally(() => setLoading(false));
   }, [id, searchParams]);
 
   useEffect(() => {
     if (!position || !destination) return;
-
     const dist = haversineDistance(position.lat, position.lng, destination.lat, destination.lng);
-    setPrevDistanceKm(distanceKm);
     setDistanceKm(dist);
-    setBearingDeg(bearing(position.lat, position.lng, destination.lat, destination.lng));
-
     if (initialDistanceRef.current == null) {
       initialDistanceRef.current = dist * 1000;
     }
@@ -84,8 +59,13 @@ export default function Visitor() {
 
   useEffect(() => {
     if (!tracking || !position || !id) return;
-    publishVisitorPosition(id, position).catch(() => {});
-  }, [tracking, position, id]);
+    publishVisitorPosition(id, position, {
+      displayName: visitorName,
+      speed,
+      battery,
+      network,
+    }).catch(() => {});
+  }, [tracking, position, id, visitorName, speed, battery, network]);
 
   useEffect(() => {
     if (tracking) resetPublishThrottle();
@@ -94,7 +74,7 @@ export default function Visitor() {
   if (loading) {
     return (
       <div className="flex min-h-dvh items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
+        <div className="spinner" />
       </div>
     );
   }
@@ -108,7 +88,7 @@ export default function Visitor() {
         </h1>
         <p className="mt-2 text-white/60">
           {loadError ||
-            'This destination may have expired or doesn\u2019t exist. Ask the owner to send the full link or QR code.'}
+            'Ask the owner for a fresh QR or full link with the destination code.'}
         </p>
         <Link to="/" className="mt-6 text-indigo-400 hover:text-indigo-300">
           Go Home
@@ -118,13 +98,9 @@ export default function Visitor() {
   }
 
   const distanceM = distanceKm != null ? distanceKm * 1000 : null;
-  const arrived = distanceM != null && distanceM <= destination.radius;
+  const inCoverage = distanceM != null && distanceM <= destination.radius;
+  const arrived = inCoverage;
   const progress = computeProgress(initialDistanceRef.current, distanceM ?? 0);
-
-  const openNavigation = () => {
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${destination.lat},${destination.lng}`;
-    window.open(url, '_blank');
-  };
 
   if (tracking && arrived && !geoLoading && position) {
     return (
@@ -139,112 +115,96 @@ export default function Visitor() {
   }
 
   return (
-    <div className="mx-auto max-w-lg px-4 py-6 pb-12">
-      <header className="mb-6">
-        <Link to="/" className="text-sm text-indigo-400 hover:text-indigo-300">
+    <div className="page-shell">
+      <div className="page-container max-w-lg">
+        <Link to="/" className="nav-back">
           ← LocateMe
         </Link>
-      </header>
 
-      <GlassCard glow className="mb-6">
-        <p className="text-xs font-medium uppercase tracking-widest text-white/50">Destination</p>
-        <h1 className="mt-1 text-2xl font-bold text-white">📍 {destination.name}</h1>
-        {destination.description && (
-          <p className="mt-1 text-white/60">{destination.description}</p>
-        )}
-      </GlassCard>
+        <GlassCard glow className="mt-4 mb-4">
+          <p className="field-label">Destination</p>
+          <h1 className="page-title text-xl">📍 {destination.name}</h1>
+          {destination.description && (
+            <p className="mt-1 text-sm text-white/60">{destination.description}</p>
+          )}
+        </GlassCard>
 
-      {!tracking ? (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+        <GlassCard className="mb-4">
+          <label className="field-label">Your name (shown to owner)</label>
+          <input
+            type="text"
+            value={visitorName}
+            onChange={(e) => setVisitorNameState(e.target.value)}
+            onBlur={() => setVisitorDisplayName(visitorName)}
+            className="field-input"
+            placeholder="e.g. Phone, John's iPhone"
+          />
+        </GlassCard>
+
+        {!tracking ? (
           <GlassCard className="text-center">
-            <span className="text-4xl">📡</span>
+            <span className="hero-icon">📡</span>
             <h2 className="mt-3 text-xl font-semibold text-white">Allow Location</h2>
-            <p className="mt-2 text-sm text-white/60">
-              We need your location to calculate live distance to the destination.
+            <p className="page-subtitle mt-2">
+              We need GPS to track your distance to the destination.
             </p>
             <button
+              type="button"
               onClick={() => {
                 requestPermission();
                 setTracking(true);
               }}
-              className="mt-6 w-full rounded-2xl bg-indigo-600 py-4 text-lg font-semibold text-white hover:bg-indigo-500"
+              className="btn-primary mt-6 w-full py-4 text-lg"
             >
               Allow
             </button>
-            {geoError && (
-              <p className="mt-3 text-sm text-red-400">{geoError}</p>
-            )}
+            {geoError && <p className="mt-3 text-sm text-red-400">{geoError}</p>}
           </GlassCard>
-        </motion.div>
-      ) : (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="space-y-4"
-        >
-          {geoLoading && !position ? (
-            <GlassCard className="text-center">
-              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
-              <p className="mt-3 text-white/60">Acquiring GPS signal…</p>
-            </GlassCard>
-          ) : (
-            <>
-              <DistanceCard
-                distanceKm={distanceKm ?? 0}
-                previousDistanceKm={prevDistanceKm}
-                arrived={arrived}
-              />
-
-              {distanceM != null && (
-                <StatusIndicator distanceMeters={distanceM} radiusMeters={destination.radius} />
-              )}
-
-              <ETA distanceKm={distanceKm ?? 0} bearingDeg={bearingDeg} />
-
-              {initialDistanceRef.current > destination.radius && (
-                <ProgressBar
-                  progress={progress}
-                  initialDistanceM={initialDistanceRef.current}
-                  currentDistanceM={distanceM ?? 0}
-                />
-              )}
-
-              <LiveMap
-                destination={{ lat: destination.lat, lng: destination.lng }}
-                userPosition={position}
-                radiusMeters={destination.radius}
-                routeCoordinates={route?.coordinates}
-                interactive={false}
-                height="240px"
-              />
-
+        ) : (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+            {geoLoading && !position ? (
               <GlassCard className="text-center">
-                <span className="text-3xl">🔒</span>
-                <p className="mt-3 text-sm font-medium text-white/70">
-                  It&apos;s hidden until you reach the destination.
-                </p>
+                <div className="spinner mx-auto" />
+                <p className="mt-3 text-white/60">Acquiring GPS signal…</p>
               </GlassCard>
+            ) : (
+              <>
+                <CoverageCard
+                  distanceM={distanceM}
+                  radiusM={destination.radius}
+                  inCoverage={inCoverage}
+                  visitorPosition={position}
+                  destination={destination}
+                  speedKmh={speed}
+                />
 
-              <Stats
-                position={position}
-                speed={speed}
-                lastUpdate={lastUpdate}
-                battery={battery}
-                network={network}
-              />
+                {initialDistanceRef.current != null && initialDistanceRef.current > destination.radius && (
+                  <ProgressBar
+                    progress={progress}
+                    initialDistanceM={initialDistanceRef.current}
+                    currentDistanceM={distanceM ?? 0}
+                    showSubtitle={false}
+                  />
+                )}
 
-              <WeatherCard weather={weather} sunTimes={sunTimes} loading={weatherLoading} />
+                <GlassCard className="text-center">
+                  <span className="text-3xl">🔒</span>
+                  <p className="mt-3 text-sm font-medium text-white/70">
+                    Hidden steps unlock when you reach the destination.
+                  </p>
+                </GlassCard>
 
-              <button
-                onClick={openNavigation}
-                className="w-full rounded-2xl bg-white/10 py-4 text-lg font-semibold text-white backdrop-blur-xl hover:bg-white/15"
-              >
-                Open Navigation
-              </button>
-            </>
-          )}
-        </motion.div>
-      )}
+                <VisitorDeviceStats
+                  speed={speed}
+                  lastUpdate={lastUpdate}
+                  battery={battery}
+                  network={network}
+                />
+              </>
+            )}
+          </motion.div>
+        )}
+      </div>
     </div>
   );
 }

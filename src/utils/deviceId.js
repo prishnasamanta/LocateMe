@@ -31,3 +31,13 @@ export function getDeviceLabel() {
 export function setDeviceLabel(label) {
   localStorage.setItem(DEVICE_LABEL_KEY, label.trim() || getDefaultDeviceLabel());
 }
+
+const VISITOR_NAME_KEY = 'locateme_visitor_display_name';
+
+export function getVisitorDisplayName() {
+  return localStorage.getItem(VISITOR_NAME_KEY) || getDeviceLabel();
+}
+
+export function setVisitorDisplayName(name) {
+  localStorage.setItem(VISITOR_NAME_KEY, name.trim() || getDeviceLabel());
+}

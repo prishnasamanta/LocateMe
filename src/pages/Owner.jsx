@@ -6,6 +6,7 @@ import GlassCard from '../components/GlassCard';
 import QRCodeDisplay from '../components/QRCode';
 import OwnerVisitorAlert from '../components/OwnerVisitorAlert';
 import OwnerLiveTracker from '../components/OwnerLiveTracker';
+import LinkVisitorPanel from '../components/LinkVisitorPanel';
 import LiveDistanceMeter from '../components/LiveDistanceMeter';
 import AccountDevicesPanel from '../components/AccountDevicesPanel';
 import GoogleSignInButton from '../components/GoogleSignInButton';
@@ -23,6 +24,7 @@ import {
   resetAccountPublishThrottle,
   isDeviceStale,
 } from '../services/accountDevices';
+import { subscribeVisitorPosition, isVisitorOnline } from '../services/visitorTracking';
 
 const RADIUS_OPTIONS = [
   { label: '50m', value: 50 },
@@ -60,6 +62,7 @@ export default function Owner() {
   const [authBusy, setAuthBusy] = useState(false);
   const [tracking, setTracking] = useState(false);
   const [devices, setDevices] = useState([]);
+  const [linkVisitor, setLinkVisitor] = useState(null);
   const [deviceLabel, setDeviceLabelState] = useState(getDeviceLabel());
 
   const deviceId = getDeviceId();
@@ -96,6 +99,13 @@ export default function Owner() {
   useEffect(() => {
     if (gpsError) setError(gpsError);
   }, [gpsError]);
+
+  useEffect(() => {
+    if (!shareId) return;
+    return subscribeVisitorPosition(shareId, setLinkVisitor);
+  }, [shareId]);
+
+  const visitorConnected = isVisitorOnline(linkVisitor);
 
   const remoteDevices = devices.filter((d) => d.deviceId !== deviceId && !isDeviceStale(d));
 
@@ -310,15 +320,45 @@ export default function Owner() {
 
         {shareUrl ? (
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-6 space-y-6">
-            <GlassCard glow className="text-center">
-              <p className="field-label">Destination code</p>
-              <p className="code-display">{shareId}</p>
-              <p className="mt-2 text-xs text-white/50">
-                Visitor enters this on /join, or scans the QR below
-              </p>
-            </GlassCard>
+            {!visitorConnected && (
+              <>
+                <GlassCard glow className="text-center">
+                  <p className="field-label">Destination code</p>
+                  <p className="code-display">{shareId}</p>
+                  <p className="mt-2 text-xs text-white/50">
+                    Visitor enters this on /join, or scans the QR below
+                  </p>
+                </GlassCard>
+
+                <GlassCard>
+                  <p className="field-label mb-2">Share link</p>
+                  <div className="flex items-center gap-2 rounded-xl bg-black/30 p-3">
+                    <code className="flex-1 truncate text-sm text-indigo-300">{shareUrl}</code>
+                    <button type="button" onClick={handleCopy} className="btn-primary shrink-0 px-4 py-2 text-sm">
+                      {copied ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                </GlassCard>
+
+                <QRCodeDisplay url={shareUrl} name={name} />
+              </>
+            )}
+
+            {visitorConnected && (
+              <>
+                {isGoogleMode && (
+                  <AccountDevicesPanel
+                    devices={devices}
+                    currentDeviceId={deviceId}
+                    userEmail={user?.email}
+                  />
+                )}
+                <LinkVisitorPanel visitor={linkVisitor} />
+              </>
+            )}
 
             {isGoogleMode &&
+              visitorConnected &&
               remoteDevices.map((device) => (
                 <LiveDistanceMeter
                   key={device.deviceId}
@@ -329,28 +369,24 @@ export default function Owner() {
                 />
               ))}
 
-            <OwnerLiveTracker
-              locationId={shareId}
-              destination={savedDestination}
-              shareUrl={shareUrl}
-              onCopy={handleCopy}
-              copied={copied}
-            />
+            <OwnerLiveTracker destination={savedDestination} visitorPos={linkVisitor} />
 
             <OwnerVisitorAlert locationId={shareId} />
-            <QRCodeDisplay url={shareUrl} name={name} />
 
-            <button
-              type="button"
-              onClick={() => {
-                setShareUrl(null);
-                setShareId(null);
-                setSavedDestination(null);
-              }}
-              className="btn-secondary w-full"
-            >
-              Create another
-            </button>
+            {!visitorConnected && (
+              <button
+                type="button"
+                onClick={() => {
+                  setShareUrl(null);
+                  setShareId(null);
+                  setSavedDestination(null);
+                  setLinkVisitor(null);
+                }}
+                className="btn-secondary w-full"
+              >
+                Create another
+              </button>
+            )}
           </motion.div>
         ) : (
           <div className="mt-6 space-y-6">

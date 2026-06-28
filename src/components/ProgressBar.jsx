@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import GlassCard from './GlassCard';
 
-export default function ProgressBar({ progress, initialDistanceM, currentDistanceM }) {
+export default function ProgressBar({ progress, initialDistanceM, currentDistanceM, showSubtitle = false }) {
   return (
     <GlassCard>
       <div className="mb-2 flex items-center justify-between text-sm">
@@ -16,7 +16,7 @@ export default function ProgressBar({ progress, initialDistanceM, currentDistanc
           transition={{ type: 'spring', stiffness: 60, damping: 20 }}
         />
       </div>
-      {initialDistanceM > 0 && (
+      {initialDistanceM > 0 && showSubtitle && (
         <p className="mt-2 text-xs text-white/40">
           Started {Math.round(initialDistanceM)}m away · Now {Math.round(currentDistanceM)}m
         </p>

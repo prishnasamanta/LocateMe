@@ -67,3 +67,30 @@ export function formatLiveDistance(distanceM) {
   if (distanceM < 10000) return `${(distanceM / 1000).toFixed(2)} km`;
   return `${(distanceM / 1000).toFixed(1)} km`;
 }
+
+/** Vertical hint for visitor (instruction) or owner (mirror position). */
+export function getVerticalHint(visitor, destination, perspective = 'visitor') {
+  const visitorAlt = visitor?.altitude;
+  const destAlt = destination?.altitude;
+  if (
+    visitorAlt == null ||
+    destAlt == null ||
+    !Number.isFinite(visitorAlt) ||
+    !Number.isFinite(destAlt)
+  ) {
+    return null;
+  }
+
+  const diff = visitorAlt - destAlt;
+  if (Math.abs(diff) <= 2) return null;
+
+  if (perspective === 'owner') {
+    return diff < 0
+      ? { icon: '⬇', text: `${Math.round(Math.abs(diff))}m below you` }
+      : { icon: '⬆', text: `${Math.round(diff)}m above you` };
+  }
+
+  return diff < 0
+    ? { icon: '⬆', text: 'Go upwards' }
+    : { icon: '⬇', text: 'Go downwards' };
+}
