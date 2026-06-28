@@ -20,11 +20,15 @@ function writeLocalTrack(store) {
 }
 
 function normalizeTrack(data) {
-  if (!data?.lat || !data?.lng) return null;
+  if (data?.lat == null || data?.lng == null) return null;
   const updatedAt = data.updatedAt ?? null;
   const stale = updatedAt ? Date.now() - new Date(updatedAt).getTime() > STALE_MS : false;
-  const speedKmh = data.speed ?? null;
-  const motion = data.motionStatus ?? getMotionStatus(speedKmh);
+  const speedKmh =
+    typeof data.speed === 'number' && Number.isFinite(data.speed) ? data.speed : null;
+  const motion =
+    data.motionStatus?.label && data.motionStatus?.emoji
+      ? data.motionStatus
+      : getMotionStatus(speedKmh);
 
   return {
     lat: data.lat,

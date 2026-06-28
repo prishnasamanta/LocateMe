@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useSearchParams, Link } from 'react-router-dom';
+import { useParams, useSearchParams, useLocation, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { getLocation } from '../services/locations';
 import { haversineDistance } from '../utils/haversine';
@@ -17,11 +17,13 @@ import { getVisitorDisplayName, setVisitorDisplayName } from '../utils/deviceId'
 export default function Visitor() {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const encodedPayload = searchParams.get('d');
   const [destination, setDestination] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [loadError, setLoadError] = useState(null);
-  const [tracking, setTracking] = useState(false);
+  const [tracking, setTracking] = useState(Boolean(location.state?.autoTrack));
   const [distanceKm, setDistanceKm] = useState(null);
   const [visitorName, setVisitorNameState] = useState(getVisitorDisplayName());
   const initialDistanceRef = useRef(null);
@@ -38,15 +40,34 @@ export default function Visitor() {
   const { battery, network } = useDeviceInfo();
 
   useEffect(() => {
-    const encodedPayload = searchParams.get('d');
+    let cancelled = false;
+    setLoading(true);
+    setNotFound(false);
+    setLoadError(null);
+
     getLocation(id, encodedPayload)
       .then((loc) => {
+        if (cancelled) return;
         if (!loc) setNotFound(true);
         else setDestination(loc);
       })
-      .catch((err) => setLoadError(err.message || 'Unable to load destination'))
-      .finally(() => setLoading(false));
-  }, [id, searchParams]);
+      .catch((err) => {
+        if (!cancelled) setLoadError(err.message || 'Unable to load destination');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, encodedPayload]);
+
+  useEffect(() => {
+    if (location.state?.autoTrack) {
+      requestPermission();
+    }
+  }, [location.state?.autoTrack, requestPermission]);
 
   useEffect(() => {
     if (!position || !destination) return;
@@ -175,7 +196,9 @@ export default function Visitor() {
                   inCoverage={inCoverage}
                   visitorPosition={position}
                   destination={destination}
-                  speedKmh={speed}
+                  speedKmh={
+                    typeof speed === 'number' && Number.isFinite(speed) ? speed : null
+                  }
                 />
 
                 {initialDistanceRef.current != null && initialDistanceRef.current > destination.radius && (

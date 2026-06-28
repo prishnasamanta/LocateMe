@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { motion } from 'framer-motion';
+import { motion as Motion } from 'framer-motion';
 import GlassCard from './GlassCard';
 import LiveMap from './LiveMap';
 import { computeRelativePosition, formatLiveDistance, getVerticalHint } from '../utils/relativePosition';
@@ -15,13 +15,22 @@ export default function OwnerLiveTracker({ destination, visitorPos }) {
   const [pulse, setPulse] = useState(false);
   const prevDistanceRef = useRef(null);
 
-  const relative = visitorPos
-    ? computeRelativePosition(visitorPos, destination, { radiusM: destination.radius })
-    : { distanceM: null, inRange: false };
+  const relative =
+    visitorPos && destination?.lat != null
+      ? computeRelativePosition(visitorPos, destination, {
+          radiusM: destination.radius ?? 500,
+        })
+      : { distanceM: null, inRange: false };
 
   const { distanceM, inRange } = relative;
   const updatedAt = parseUpdatedAt(visitorPos?.updatedAt);
-  const motion = visitorPos?.motionStatus ?? getMotionStatus(visitorPos?.speed);
+  const speedKmh =
+    typeof visitorPos?.speed === 'number' && Number.isFinite(visitorPos.speed)
+      ? visitorPos.speed
+      : null;
+  const motionStatus = visitorPos?.motionStatus?.label
+    ? visitorPos.motionStatus
+    : getMotionStatus(speedKmh);
   const vertical =
     inRange && visitorPos ? getVerticalHint(visitorPos, destination, 'owner') : null;
 
@@ -58,7 +67,7 @@ export default function OwnerLiveTracker({ destination, visitorPos }) {
         </span>
       </div>
 
-      <motion.div
+      <Motion.div
         animate={pulse ? { scale: [1, 1.02, 1] } : { scale: 1 }}
         className="mt-4 text-center"
       >
@@ -68,25 +77,27 @@ export default function OwnerLiveTracker({ destination, visitorPos }) {
             {vertical.icon} {vertical.text}
           </p>
         )}
-      </motion.div>
+      </Motion.div>
 
       <div className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-white/5 px-4 py-2.5">
-        <span className="text-xl">{motion.emoji}</span>
-        <span className="font-medium text-white/80">{motion.label}</span>
-        {visitorPos.speed != null && (
-          <span className="text-sm text-white/40">· {visitorPos.speed.toFixed(1)} km/h</span>
+        <span className="text-xl">{motionStatus.emoji}</span>
+        <span className="font-medium text-white/80">{motionStatus.label}</span>
+        {speedKmh != null && (
+          <span className="text-sm text-white/40">· {speedKmh.toFixed(1)} km/h</span>
         )}
       </div>
 
-      <div className="mt-4">
-        <LiveMap
-          destination={{ lat: destination.lat, lng: destination.lng }}
-          userPosition={visitorPos}
-          radiusMeters={destination.radius}
-          interactive={false}
-          height="240px"
-        />
-      </div>
+      {destination?.lat != null && destination?.lng != null && (
+        <div className="mt-4">
+          <LiveMap
+            destination={{ lat: destination.lat, lng: destination.lng }}
+            userPosition={visitorPos}
+            radiusMeters={destination.radius ?? 500}
+            interactive={false}
+            height="240px"
+          />
+        </div>
+      )}
 
       {updatedAt && (
         <p className="mt-2 text-center text-xs text-white/40">

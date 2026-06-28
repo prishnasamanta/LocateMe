@@ -22,9 +22,12 @@ export default function LiveDistanceMeter({
   const [pulse, setPulse] = useState(false);
   const prevDistanceRef = useRef(null);
 
-  const relative = remotePosition
-    ? computeRelativePosition(remotePosition, destination, { radiusM: destination.radius })
-    : { distanceM: null, badges: [], inRange: false };
+  const relative =
+    remotePosition && destination?.lat != null
+      ? computeRelativePosition(remotePosition, destination, {
+          radiusM: destination.radius ?? 500,
+        })
+      : { distanceM: null, badges: [], inRange: false };
 
   const { distanceM, inRange } = relative;
   const updatedAt = parseUpdatedAt(remotePosition?.updatedAt);
@@ -103,12 +106,12 @@ export default function LiveDistanceMeter({
         </div>
       )}
 
-      {remotePosition && (
+      {remotePosition && destination?.lat != null && destination?.lng != null && (
         <div className="mt-5">
           <LiveMap
             destination={{ lat: destination.lat, lng: destination.lng }}
             userPosition={remotePosition}
-            radiusMeters={destination.radius}
+            radiusMeters={destination.radius ?? 500}
             interactive={false}
             height="220px"
           />

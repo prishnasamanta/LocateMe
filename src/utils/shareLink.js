@@ -33,7 +33,10 @@ export function parseShareInput(raw) {
 
 export function buildVisitorPath(id, encodedPayload) {
   if (encodedPayload) {
-    return `/l/${id}?d=${encodeURIComponent(encodedPayload)}`;
+    return {
+      pathname: `/l/${id}`,
+      search: `?d=${encodeURIComponent(encodedPayload)}`,
+    };
   }
-  return `/l/${id}`;
+  return { pathname: `/l/${id}` };
 }

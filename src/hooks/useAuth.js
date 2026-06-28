@@ -12,10 +12,29 @@ export function useAuth() {
       return;
     }
 
-    return onAuthStateChanged(auth, (next) => {
-      setUser(next);
-      setLoading(false);
-    });
+    let settled = false;
+    const finish = () => {
+      if (!settled) {
+        settled = true;
+        setLoading(false);
+      }
+    };
+
+    const timeout = window.setTimeout(finish, 4000);
+
+    const unsub = onAuthStateChanged(
+      auth,
+      (next) => {
+        setUser(next);
+        finish();
+      },
+      () => finish()
+    );
+
+    return () => {
+      clearTimeout(timeout);
+      unsub();
+    };
   }, []);
 
   const signInWithGoogle = async () => {

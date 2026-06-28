@@ -19,7 +19,7 @@ import { parseShareInput, buildVisitorPath } from '../utils/shareLink';
 export default function JoinDevice() {
   const navigate = useNavigate();
   const { user, loading: authLoading, signInWithGoogle } = useAuth();
-  const [step, setStep] = useState('auth');
+  const [mode, setMode] = useState('code');
   const [authBusy, setAuthBusy] = useState(false);
   const [tracking, setTracking] = useState(false);
   const [deviceLabel, setDeviceLabelState] = useState(getDeviceLabel());
@@ -32,10 +32,6 @@ export default function JoinDevice() {
     useGeolocation(tracking);
 
   useEffect(() => {
-    if (user && step === 'auth') setStep('location');
-  }, [user, step]);
-
-  useEffect(() => {
     if (!tracking || !position || !user?.uid) return;
     publishAccountDevicePosition(user.uid, deviceId, position, { viaJoin: true }).catch(() => {});
   }, [tracking, position, user?.uid, deviceId]);
@@ -44,7 +40,7 @@ export default function JoinDevice() {
     if (tracking) resetAccountPublishThrottle();
   }, [tracking]);
 
-  const pairDestination = async (raw) => {
+  const pairDestination = async (raw, { locationGranted = false } = {}) => {
     setPairing(true);
     setPairError(null);
     try {
@@ -58,7 +54,9 @@ export default function JoinDevice() {
         throw new Error('Destination not found. Ask owner for a fresh QR or full link.');
       }
 
-      navigate(buildVisitorPath(result.location.id, result.encodedPayload));
+      navigate(buildVisitorPath(result.location.id, result.encodedPayload), {
+        state: { autoTrack: locationGranted },
+      });
     } catch (err) {
       setPairError(err.message || 'Could not load destination');
     } finally {
@@ -68,21 +66,10 @@ export default function JoinDevice() {
 
   const handleCodeSubmit = (e) => {
     e.preventDefault();
-    pairDestination(codeInput);
+    pairDestination(codeInput, { locationGranted: tracking });
   };
 
-  if (!isFirebaseConfigured) {
-    return (
-      <div className="page-shell">
-        <div className="page-container max-w-lg text-center">
-          <p className="text-white/70">Firebase is required for device pairing.</p>
-          <Link to="/" className="nav-back mt-4 inline-block">← Home</Link>
-        </div>
-      </div>
-    );
-  }
-
-  if (authLoading) {
+  if (authLoading && mode === 'google') {
     return (
       <div className="flex min-h-dvh items-center justify-center">
         <div className="spinner" />
@@ -90,11 +77,74 @@ export default function JoinDevice() {
     );
   }
 
-  if (step === 'auth' || !user) {
+  if (mode === 'code') {
     return (
       <div className="page-shell">
         <div className="page-container max-w-md">
-          <Link to="/" className="nav-back">← LocateMe</Link>
+          <Link to="/" className="nav-back">
+            ← LocateMe
+          </Link>
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+            <GlassCard glow className="mt-4 text-center">
+              <span className="hero-icon">🔗</span>
+              <h1 className="page-title mt-4">Join destination</h1>
+              <p className="page-subtitle mt-2">
+                Enter the owner&apos;s 6-character code, paste the link, or upload their QR.
+              </p>
+            </GlassCard>
+
+            <GlassCard className="mt-4">
+              <form onSubmit={handleCodeSubmit}>
+                <label className="field-label">Destination code or link</label>
+                <input
+                  type="text"
+                  value={codeInput}
+                  onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
+                  placeholder="e.g. 9QWKNB or full link"
+                  className="field-input font-mono uppercase tracking-widest"
+                />
+                <button
+                  type="submit"
+                  disabled={pairing || !codeInput.trim()}
+                  className="btn-primary mt-3 w-full"
+                >
+                  {pairing ? 'Loading…' : 'Connect →'}
+                </button>
+              </form>
+
+              <div className="my-4 flex items-center gap-3">
+                <div className="h-px flex-1 bg-white/10" />
+                <span className="text-xs text-white/40">or</span>
+                <div className="h-px flex-1 bg-white/10" />
+              </div>
+
+              <QrUploader label="Upload QR screenshot" onScan={(data) => pairDestination(data)} />
+
+              {pairError && <div className="alert-error mt-4 text-sm">{pairError}</div>}
+            </GlassCard>
+
+            {isFirebaseConfigured && (
+              <button
+                type="button"
+                onClick={() => setMode('google')}
+                className="btn-secondary mt-4 w-full"
+              >
+                Register this phone on Google hub instead
+              </button>
+            )}
+          </motion.div>
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === 'google' && !user) {
+    return (
+      <div className="page-shell">
+        <div className="page-container max-w-md">
+          <button type="button" onClick={() => setMode('code')} className="nav-back">
+            ← Back
+          </button>
           <GlassCard glow className="mt-6 text-center">
             <span className="hero-icon">📱</span>
             <h1 className="page-title mt-4">Connect this device</h1>
@@ -124,11 +174,13 @@ export default function JoinDevice() {
     );
   }
 
-  if (step === 'location' && !tracking) {
+  if (mode === 'google' && user && !tracking) {
     return (
       <div className="page-shell">
         <div className="page-container max-w-md">
-          <Link to="/" className="nav-back">← LocateMe</Link>
+          <button type="button" onClick={() => setMode('code')} className="nav-back">
+            ← Back
+          </button>
           <GlassCard className="mt-4">
             <label className="field-label">Device name</label>
             <input
@@ -148,7 +200,6 @@ export default function JoinDevice() {
               onClick={() => {
                 requestPermission();
                 setTracking(true);
-                setStep('pair');
               }}
               className="btn-primary mt-6 w-full"
             >
@@ -164,12 +215,14 @@ export default function JoinDevice() {
   return (
     <div className="page-shell">
       <div className="page-container max-w-md">
-        <Link to="/" className="nav-back">← LocateMe</Link>
+        <Link to="/" className="nav-back">
+          ← LocateMe
+        </Link>
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <GlassCard glow className="mt-4 text-center">
             <span className="text-3xl">✅</span>
             <p className="mt-2 font-semibold text-emerald-400">Device connected</p>
-            <p className="text-sm text-white/50">{user.email}</p>
+            <p className="text-sm text-white/50">{user?.email}</p>
           </GlassCard>
 
           <GlassCard className="mt-4">
@@ -198,10 +251,7 @@ export default function JoinDevice() {
               <div className="h-px flex-1 bg-white/10" />
             </div>
 
-            <QrUploader
-              label="Upload QR screenshot"
-              onScan={(data) => pairDestination(data)}
-            />
+            <QrUploader label="Upload QR screenshot" onScan={(data) => pairDestination(data, { locationGranted: true })} />
 
             {pairError && <div className="alert-error mt-4 text-sm">{pairError}</div>}
           </GlassCard>

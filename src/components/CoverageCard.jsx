@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion';
+import { motion as Motion } from 'framer-motion';
 import GlassCard from './GlassCard';
 import { getProximityStatus } from '../utils/helpers';
 import { formatLiveDistance, getVerticalHint } from '../utils/relativePosition';
@@ -13,7 +13,7 @@ export default function CoverageCard({
   speedKmh,
 }) {
   const status = getProximityStatus(distanceM ?? Infinity, radiusM);
-  const motion = getMotionStatus(speedKmh);
+  const motionStatus = getMotionStatus(speedKmh);
   const vertical =
     inCoverage && visitorPosition && destination
       ? getVerticalHint(visitorPosition, destination, 'visitor')
@@ -25,14 +25,14 @@ export default function CoverageCard({
 
       {inCoverage ? (
         <div className="text-center">
-          <motion.p
+          <Motion.p
             key={distanceM}
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             className="font-mono text-5xl font-bold text-emerald-400"
           >
             {formatLiveDistance(distanceM)}
-          </motion.p>
+          </Motion.p>
           {vertical && (
             <p className="mt-3 text-lg font-semibold text-indigo-300">
               {vertical.icon} {vertical.text}
@@ -52,8 +52,8 @@ export default function CoverageCard({
       )}
 
       <div className={`mt-4 flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 ${status.bg}`}>
-        <span className="text-xl">{motion.emoji}</span>
-        <span className={`font-medium ${status.color}`}>{motion.label}</span>
+        <span className="text-xl">{motionStatus.emoji}</span>
+        <span className={`font-medium ${status.color}`}>{motionStatus.label}</span>
       </div>
     </GlassCard>
   );
