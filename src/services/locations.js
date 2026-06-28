@@ -57,6 +57,62 @@ function normalizeLocation(data, id) {
   };
 }
 
+async function fetchShareCodePayload(id) {
+  if (!isFirebaseConfigured || !db) return null;
+  try {
+    const snap = await getDoc(doc(db, 'shareCodes', id));
+    if (!snap.exists()) return null;
+    return snap.data()?.d ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getLocation(id, encodedPayload) {
+  let payload = encodedPayload;
+  if (!payload) {
+    payload = await fetchShareCodePayload(id);
+  }
+
+  const fromEmbedded = decodeLocationPayload(payload, id);
+  if (fromEmbedded && !isExpired(fromEmbedded)) return fromEmbedded;
+
+  if (isFirebaseConfigured && db) {
+    try {
+      const snap = await getDoc(doc(db, 'locations', id));
+      if (!snap.exists()) return fromEmbedded && !isExpired(fromEmbedded) ? fromEmbedded : null;
+      const data = snap.data();
+      const expires = data.expires?.toDate?.()?.toISOString?.() ?? data.expires ?? null;
+      const location = normalizeLocation(
+        {
+          ...data,
+          expires,
+          createdAt: data.createdAt?.toDate?.()?.toISOString?.() ?? data.createdAt,
+        },
+        id
+      );
+      return isExpired(location) ? null : location;
+    } catch {
+      return fromEmbedded && !isExpired(fromEmbedded) ? fromEmbedded : null;
+    }
+  }
+
+  const store = readLocalStore();
+  const data = store[id];
+  if (!data) return fromEmbedded && !isExpired(fromEmbedded) ? fromEmbedded : null;
+  const location = normalizeLocation(data, id);
+  return isExpired(location) ? null : location;
+}
+
+export async function resolveShareInput(parsed) {
+  if (!parsed?.id) return null;
+  let payload = parsed.encodedPayload;
+  if (!payload) payload = await fetchShareCodePayload(parsed.id);
+  const location = await getLocation(parsed.id, payload);
+  if (!location) return null;
+  return { location, encodedPayload: payload };
+}
+
 export async function saveLocation(locationData) {
   const id = generateShortId();
   const expires = computeExpiresAt(locationData.expiration);
@@ -70,60 +126,32 @@ export async function saveLocation(locationData) {
     ownerEmail: ownerEmail ?? null,
   };
 
+  const location = { id, ...payload };
+  const encodedPayload = encodeLocationPayload(location);
+
   if (isFirebaseConfigured && db) {
-    await setDoc(doc(db, 'locations', id), {
-      ...payload,
-      createdAt: serverTimestamp(),
-      expires: expires ? Timestamp.fromDate(new Date(expires)) : null,
-    });
+    try {
+      await setDoc(doc(db, 'locations', id), {
+        ...payload,
+        createdAt: serverTimestamp(),
+        expires: expires ? Timestamp.fromDate(new Date(expires)) : null,
+      });
+      await setDoc(doc(db, 'shareCodes', id), {
+        d: encodedPayload,
+        createdAt: serverTimestamp(),
+      });
+    } catch {
+      const store = readLocalStore();
+      store[id] = payload;
+      writeLocalStore(store);
+    }
   } else {
     const store = readLocalStore();
     store[id] = payload;
     writeLocalStore(store);
   }
 
-  const location = { id, ...payload };
-  return {
-    ...location,
-    encodedPayload: isFirebaseConfigured && db ? null : encodeLocationPayload(location),
-  };
-}
-
-export async function getLocation(id, encodedPayload) {
-  if (isFirebaseConfigured && db) {
-    try {
-      const snap = await getDoc(doc(db, 'locations', id));
-      if (!snap.exists()) {
-        const fromUrl = decodeLocationPayload(encodedPayload, id);
-        if (fromUrl && !isExpired(fromUrl)) return fromUrl;
-        return null;
-      }
-      const data = snap.data();
-      const expires = data.expires?.toDate?.()?.toISOString?.() ?? data.expires ?? null;
-      const location = normalizeLocation(
-        {
-          ...data,
-          expires,
-          createdAt: data.createdAt?.toDate?.()?.toISOString?.() ?? data.createdAt,
-        },
-        id
-      );
-      return isExpired(location) ? null : location;
-    } catch {
-      const fromUrl = decodeLocationPayload(encodedPayload, id);
-      if (fromUrl && !isExpired(fromUrl)) return fromUrl;
-      throw new Error('Unable to load destination');
-    }
-  }
-
-  const fromUrl = decodeLocationPayload(encodedPayload, id);
-  if (fromUrl && !isExpired(fromUrl)) return fromUrl;
-
-  const store = readLocalStore();
-  const data = store[id];
-  if (!data) return null;
-  const location = normalizeLocation(data, id);
-  return isExpired(location) ? null : location;
+  return { ...location, encodedPayload };
 }
 
 export async function locationExists(id) {

@@ -11,7 +11,7 @@ export function generateShortId(length = 6) {
 export function getShareUrl(id, encodedPayload) {
   const base = import.meta.env.VITE_APP_URL || window.location.origin;
   if (encodedPayload) {
-    return `${base}/l/${id}?d=${encodedPayload}`;
+    return `${base}/l/${id}?d=${encodeURIComponent(encodedPayload)}`;
   }
   return `${base}/l/${id}`;
 }

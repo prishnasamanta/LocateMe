@@ -1,59 +1,83 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import GlassCard from '../components/GlassCard';
 import GoogleSignInButton from '../components/GoogleSignInButton';
-import RelativePositionBadge from '../components/RelativePositionBadge';
+import QrUploader from '../components/QrUploader';
 import { useAuth } from '../hooks/useAuth';
 import { useGeolocation } from '../hooks/useGeolocation';
 import { isFirebaseConfigured } from '../firebase/config';
+import { formatAuthError } from '../utils/authErrors';
 import { getDeviceId, getDeviceLabel, setDeviceLabel } from '../utils/deviceId';
 import {
   publishAccountDevicePosition,
-  subscribeAccountDestination,
   resetAccountPublishThrottle,
 } from '../services/accountDevices';
-import { formatLiveDistance } from '../utils/relativePosition';
-import { haversineDistance } from '../utils/haversine';
+import { resolveShareInput } from '../services/locations';
+import { parseShareInput, buildVisitorPath } from '../utils/shareLink';
 
 export default function JoinDevice() {
+  const navigate = useNavigate();
   const { user, loading: authLoading, signInWithGoogle } = useAuth();
+  const [step, setStep] = useState('auth');
   const [authBusy, setAuthBusy] = useState(false);
   const [tracking, setTracking] = useState(false);
-  const [destination, setDestination] = useState(null);
   const [deviceLabel, setDeviceLabelState] = useState(getDeviceLabel());
+  const [codeInput, setCodeInput] = useState('');
+  const [pairError, setPairError] = useState(null);
+  const [pairing, setPairing] = useState(false);
 
   const deviceId = getDeviceId();
   const { position, error: geoError, loading: geoLoading, requestPermission } =
     useGeolocation(tracking);
 
   useEffect(() => {
-    if (!user?.uid) return;
-    return subscribeAccountDestination(user.uid, setDestination);
-  }, [user?.uid]);
+    if (user && step === 'auth') setStep('location');
+  }, [user, step]);
 
   useEffect(() => {
     if (!tracking || !position || !user?.uid) return;
-    publishAccountDevicePosition(user.uid, deviceId, position).catch(() => {});
+    publishAccountDevicePosition(user.uid, deviceId, position, { viaJoin: true }).catch(() => {});
   }, [tracking, position, user?.uid, deviceId]);
 
   useEffect(() => {
     if (tracking) resetAccountPublishThrottle();
   }, [tracking]);
 
-  const distanceM =
-    position && destination
-      ? haversineDistance(position.lat, position.lng, destination.lat, destination.lng) * 1000
-      : null;
-  const inRange = distanceM != null && distanceM <= (destination?.radius ?? 500);
+  const pairDestination = async (raw) => {
+    setPairing(true);
+    setPairError(null);
+    try {
+      const parsed = parseShareInput(raw);
+      if (!parsed?.id) {
+        throw new Error('Invalid code or link. Use the 6-character code, full link, or QR.');
+      }
+
+      const result = await resolveShareInput(parsed);
+      if (!result) {
+        throw new Error('Destination not found. Ask owner for a fresh QR or full link.');
+      }
+
+      navigate(buildVisitorPath(result.location.id, result.encodedPayload));
+    } catch (err) {
+      setPairError(err.message || 'Could not load destination');
+    } finally {
+      setPairing(false);
+    }
+  };
+
+  const handleCodeSubmit = (e) => {
+    e.preventDefault();
+    pairDestination(codeInput);
+  };
 
   if (!isFirebaseConfigured) {
     return (
-      <div className="mx-auto max-w-lg px-4 py-12 text-center">
-        <p className="text-white/70">Firebase is not configured on this deployment.</p>
-        <Link to="/" className="mt-4 inline-block text-indigo-400">
-          ← Home
-        </Link>
+      <div className="page-shell">
+        <div className="page-container max-w-lg text-center">
+          <p className="text-white/70">Firebase is required for device pairing.</p>
+          <Link to="/" className="nav-back mt-4 inline-block">← Home</Link>
+        </div>
       </div>
     );
   }
@@ -61,122 +85,134 @@ export default function JoinDevice() {
   if (authLoading) {
     return (
       <div className="flex min-h-dvh items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
+        <div className="spinner" />
       </div>
     );
   }
 
-  if (!user) {
+  if (step === 'auth' || !user) {
     return (
-      <div className="mx-auto max-w-md px-4 py-12">
-        <Link to="/" className="text-sm text-indigo-400 hover:text-indigo-300">
-          ← LocateMe
-        </Link>
-        <GlassCard glow className="mt-6 text-center">
-          <span className="text-4xl">📱</span>
-          <h1 className="mt-3 text-2xl font-bold text-white">Connect this device</h1>
-          <p className="mt-2 text-sm text-white/60">
-            Sign in with the <strong className="text-white">same Google account</strong> as the
-            owner. Your live location will appear on their dashboard.
-          </p>
-          <div className="mt-6">
-            <GoogleSignInButton
-              loading={authBusy}
-              onClick={async () => {
-                setAuthBusy(true);
-                try {
-                  await signInWithGoogle();
-                } finally {
-                  setAuthBusy(false);
-                }
-              }}
+      <div className="page-shell">
+        <div className="page-container max-w-md">
+          <Link to="/" className="nav-back">← LocateMe</Link>
+          <GlassCard glow className="mt-6 text-center">
+            <span className="hero-icon">📱</span>
+            <h1 className="page-title mt-4">Connect this device</h1>
+            <p className="page-subtitle mt-2">
+              Sign in with Google so the owner hub remembers this phone.
+            </p>
+            <div className="mt-6">
+              <GoogleSignInButton
+                loading={authBusy}
+                onClick={async () => {
+                  setAuthBusy(true);
+                  setPairError(null);
+                  try {
+                    await signInWithGoogle();
+                  } catch (err) {
+                    setPairError(formatAuthError(err));
+                  } finally {
+                    setAuthBusy(false);
+                  }
+                }}
+              />
+            </div>
+            {pairError && <div className="alert-error mt-4 text-left text-sm">{pairError}</div>}
+          </GlassCard>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'location' && !tracking) {
+    return (
+      <div className="page-shell">
+        <div className="page-container max-w-md">
+          <Link to="/" className="nav-back">← LocateMe</Link>
+          <GlassCard className="mt-4">
+            <label className="field-label">Device name</label>
+            <input
+              type="text"
+              value={deviceLabel}
+              onChange={(e) => setDeviceLabelState(e.target.value)}
+              onBlur={() => setDeviceLabel(deviceLabel)}
+              className="field-input"
             />
-          </div>
-        </GlassCard>
+          </GlassCard>
+          <GlassCard glow className="mt-4 text-center">
+            <span className="hero-icon">📡</span>
+            <h2 className="mt-3 text-lg font-semibold text-white">Share live GPS</h2>
+            <p className="page-subtitle mt-2">Owner will see this device on their hub.</p>
+            <button
+              type="button"
+              onClick={() => {
+                requestPermission();
+                setTracking(true);
+                setStep('pair');
+              }}
+              className="btn-primary mt-6 w-full"
+            >
+              Allow location
+            </button>
+            {geoError && <p className="mt-3 text-sm text-red-400">{geoError}</p>}
+          </GlassCard>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-lg px-4 py-8">
-      <Link to="/" className="text-sm text-indigo-400 hover:text-indigo-300">
-        ← LocateMe
-      </Link>
-      <h1 className="mt-2 text-2xl font-bold text-white">Connected device</h1>
-      <p className="text-sm text-white/50">{user.email}</p>
-
-      <GlassCard className="mt-6">
-        <label className="mb-1 block text-xs font-medium uppercase tracking-widest text-white/50">
-          Device name
-        </label>
-        <input
-          type="text"
-          value={deviceLabel}
-          onChange={(e) => setDeviceLabelState(e.target.value)}
-          onBlur={() => setDeviceLabel(deviceLabel)}
-          className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-2.5 text-white"
-        />
-      </GlassCard>
-
-      {!tracking ? (
-        <GlassCard className="mt-4 text-center">
-          <span className="text-4xl">📡</span>
-          <h2 className="mt-3 text-lg font-semibold text-white">Share live location</h2>
-          <p className="mt-2 text-sm text-white/60">
-            The owner will see your GPS on their dashboard as you move.
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              requestPermission();
-              setTracking(true);
-            }}
-            className="mt-6 w-full rounded-2xl bg-indigo-600 py-4 font-semibold text-white hover:bg-indigo-500"
-          >
-            Allow location
-          </button>
-          {geoError && <p className="mt-3 text-sm text-red-400">{geoError}</p>}
-        </GlassCard>
-      ) : (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4 space-y-4">
-          <GlassCard glow className="text-center">
+    <div className="page-shell">
+      <div className="page-container max-w-md">
+        <Link to="/" className="nav-back">← LocateMe</Link>
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+          <GlassCard glow className="mt-4 text-center">
             <span className="text-3xl">✅</span>
-            <p className="mt-2 font-semibold text-emerald-400">Location sharing active</p>
-            <p className="mt-1 text-sm text-white/50">Owner can see you on their dashboard.</p>
+            <p className="mt-2 font-semibold text-emerald-400">Device connected</p>
+            <p className="text-sm text-white/50">{user.email}</p>
           </GlassCard>
 
-          {geoLoading && !position ? (
-            <GlassCard className="text-center">
-              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
-            </GlassCard>
-          ) : destination && position ? (
-            <GlassCard>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs uppercase tracking-widest text-white/50">Destination</p>
-                  <p className="font-bold text-white">{destination.name}</p>
-                </div>
-                <RelativePositionBadge
-                  visitor={position}
-                  destination={destination}
-                  compact={inRange}
-                />
-              </div>
-              <p
-                className={`mt-4 text-center font-mono text-4xl font-bold ${
-                  inRange ? 'text-emerald-400' : 'text-white'
-                }`}
-              >
-                {formatLiveDistance(distanceM)}
-              </p>
-            </GlassCard>
-          ) : (
-            <GlassCard className="text-center text-sm text-white/50">
-              Waiting for owner to set a destination…
+          <GlassCard className="mt-4">
+            <h2 className="text-lg font-bold text-white">Enter destination</h2>
+            <p className="mt-1 text-sm text-white/50">
+              Paste the link, enter the 6-character code, or upload the owner&apos;s QR.
+            </p>
+
+            <form onSubmit={handleCodeSubmit} className="mt-4">
+              <label className="field-label">Destination code or link</label>
+              <input
+                type="text"
+                value={codeInput}
+                onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
+                placeholder="e.g. PQZ3NS or full link"
+                className="field-input font-mono uppercase tracking-widest"
+              />
+              <button type="submit" disabled={pairing || !codeInput.trim()} className="btn-primary mt-3 w-full">
+                {pairing ? 'Loading…' : 'Go to destination →'}
+              </button>
+            </form>
+
+            <div className="my-4 flex items-center gap-3">
+              <div className="h-px flex-1 bg-white/10" />
+              <span className="text-xs text-white/40">or</span>
+              <div className="h-px flex-1 bg-white/10" />
+            </div>
+
+            <QrUploader
+              label="Upload QR screenshot"
+              onScan={(data) => pairDestination(data)}
+            />
+
+            {pairError && <div className="alert-error mt-4 text-sm">{pairError}</div>}
+          </GlassCard>
+
+          {geoLoading && !position && (
+            <GlassCard className="mt-4 text-center">
+              <div className="spinner mx-auto" />
             </GlassCard>
           )}
         </motion.div>
-      )}
+      </div>
     </div>
   );
 }

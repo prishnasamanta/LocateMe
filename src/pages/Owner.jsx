@@ -14,6 +14,7 @@ import { useAuth } from '../hooks/useAuth';
 import { saveLocation } from '../services/locations';
 import { getShareUrl } from '../utils/idGenerator';
 import { isFirebaseConfigured } from '../firebase/config';
+import { formatAuthError } from '../utils/authErrors';
 import { getDeviceId, getDeviceLabel, setDeviceLabel } from '../utils/deviceId';
 import {
   publishAccountDevicePosition,
@@ -42,12 +43,12 @@ const EXPIRATION_OPTIONS = [
 const NAME_PRESETS = ['Library', 'Home', 'Secret Spot', 'Treasure', 'Meeting Point'];
 
 export default function Owner() {
+  const [ownerMode, setOwnerMode] = useState(null);
   const [lat, setLat] = useState(22.5726);
   const [lng, setLng] = useState(88.3639);
   const [radius, setRadius] = useState(500);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [visibility, setVisibility] = useState('public');
   const [expiration, setExpiration] = useState('never');
   const [saving, setSaving] = useState(false);
   const [shareUrl, setShareUrl] = useState(null);
@@ -68,15 +69,17 @@ export default function Owner() {
   const { position, error: geoError, loading: geoLoading, requestPermission } =
     useGeolocation(tracking);
 
-  useEffect(() => {
-    if (!user?.uid) return;
-    return subscribeAccountDevices(user.uid, setDevices);
-  }, [user?.uid]);
+  const isGoogleMode = ownerMode === 'google';
 
   useEffect(() => {
-    if (!tracking || !position || !user?.uid) return;
-    publishAccountDevicePosition(user.uid, deviceId, position).catch(() => {});
-  }, [tracking, position, user?.uid, deviceId]);
+    if (!isGoogleMode || !user?.uid) return;
+    return subscribeAccountDevices(user.uid, setDevices);
+  }, [isGoogleMode, user?.uid]);
+
+  useEffect(() => {
+    if (!isGoogleMode || !tracking || !position || !user?.uid) return;
+    publishAccountDevicePosition(user.uid, deviceId, position, { viaJoin: false }).catch(() => {});
+  }, [isGoogleMode, tracking, position, user?.uid, deviceId]);
 
   useEffect(() => {
     if (tracking) resetAccountPublishThrottle();
@@ -106,7 +109,6 @@ export default function Owner() {
       setError('Please enter a name for this destination');
       return;
     }
-    if (!user?.uid) return;
 
     setSaving(true);
     setError(null);
@@ -118,22 +120,24 @@ export default function Owner() {
         lng,
         radius,
         altitude,
-        visibility,
         expiration,
-        ownerUid: user.uid,
-        ownerEmail: user.email,
+        ownerUid: user?.uid ?? null,
+        ownerEmail: user?.email ?? null,
       };
 
       const result = await saveLocation(dest);
-      await saveAccountDestination(user.uid, {
-        name: dest.name,
-        lat,
-        lng,
-        radius,
-        altitude,
-        setByDeviceId: deviceId,
-        setByLabel: deviceLabel,
-      });
+
+      if (isGoogleMode && user?.uid) {
+        await saveAccountDestination(user.uid, {
+          name: dest.name,
+          lat,
+          lng,
+          radius,
+          altitude,
+          setByDeviceId: deviceId,
+          setByLabel: deviceLabel,
+        });
+      }
 
       const url = getShareUrl(result.id, result.encodedPayload);
       setShareId(result.id);
@@ -152,299 +156,296 @@ export default function Owner() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  if (!isFirebaseConfigured) {
+  if (!ownerMode) {
     return (
-      <div className="mx-auto max-w-lg px-4 py-12 text-center">
-        <h1 className="text-xl font-bold text-white">Firebase required</h1>
-        <p className="mt-2 text-white/60">
-          Add VITE_FIREBASE_* variables to your .env or Render dashboard, then redeploy.
-        </p>
-        <Link to="/" className="mt-4 inline-block text-indigo-400">
-          ← Home
-        </Link>
+      <div className="page-shell">
+        <div className="page-container max-w-lg">
+          <Link to="/" className="nav-back">← LocateMe</Link>
+          <GlassCard glow className="mt-6 text-center">
+            <span className="hero-icon">📍</span>
+            <h1 className="page-title mt-4">How do you want to start?</h1>
+            <p className="page-subtitle mt-2">
+              Connect Google for a Find-Hub style device list, or set a location manually.
+            </p>
+            <div className="mt-8 space-y-3">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isFirebaseConfigured) {
+                    setError('Google hub requires Firebase env vars on this deployment.');
+                    setOwnerMode('google');
+                  } else {
+                    setOwnerMode('google');
+                  }
+                }}
+                className="btn-primary w-full"
+              >
+                🔐 Connect Google account
+              </button>
+              <button
+                type="button"
+                onClick={() => setOwnerMode('manual')}
+                className="btn-secondary w-full"
+              >
+                🗺️ Set location manually
+              </button>
+            </div>
+          </GlassCard>
+        </div>
       </div>
     );
   }
 
-  if (authLoading) {
+  if (isGoogleMode && authLoading) {
     return (
       <div className="flex min-h-dvh items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
+        <div className="spinner" />
       </div>
     );
   }
 
-  if (!user) {
+  if (isGoogleMode && !user) {
     return (
-      <div className="mx-auto max-w-md px-4 py-12">
-        <Link to="/" className="text-sm text-indigo-400 hover:text-indigo-300">
-          ← LocateMe
-        </Link>
-        <GlassCard glow className="mt-6 text-center">
-          <span className="text-4xl">🔐</span>
-          <h1 className="mt-3 text-2xl font-bold text-white">Owner sign in</h1>
-          <p className="mt-2 text-sm text-white/60">
-            Sign in with Google to create destinations and see all devices on your account live.
-          </p>
-          <div className="mt-6">
-            <GoogleSignInButton
-              loading={authBusy}
-              onClick={async () => {
-                setAuthBusy(true);
-                try {
-                  await signInWithGoogle();
-                } catch (err) {
-                  setError(err.message || 'Sign in failed');
-                } finally {
-                  setAuthBusy(false);
-                }
-              }}
-            />
-          </div>
-          {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
-          <p className="mt-6 text-xs text-white/40">
-            On the second phone, open{' '}
-            <Link to="/join" className="text-indigo-400">
-              /join
-            </Link>{' '}
-            with the same Google account.
-          </p>
-        </GlassCard>
+      <div className="page-shell">
+        <div className="page-container max-w-md">
+          <button type="button" onClick={() => setOwnerMode(null)} className="nav-back">
+            ← Back
+          </button>
+          <GlassCard glow className="mt-6 text-center">
+            <span className="hero-icon">🔐</span>
+            <h1 className="page-title mt-4">Sign in with Google</h1>
+            <p className="page-subtitle mt-2">
+              Your device hub will list every phone logged into this Gmail, plus devices that join
+              via /join.
+            </p>
+            <div className="mt-6">
+              <GoogleSignInButton
+                loading={authBusy}
+                onClick={async () => {
+                  setAuthBusy(true);
+                  setError(null);
+                  try {
+                    await signInWithGoogle();
+                  } catch (err) {
+                    setError(formatAuthError(err));
+                  } finally {
+                    setAuthBusy(false);
+                  }
+                }}
+              />
+            </div>
+            {error && (
+              <div className="alert-error mt-4 text-left text-sm">
+                <p>{error}</p>
+                {error.includes('Authorized domains') && (
+                  <p className="mt-2 text-xs text-white/50">
+                    Also add <code className="text-indigo-300">localhost</code> for local dev.
+                  </p>
+                )}
+              </div>
+            )}
+          </GlassCard>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-8">
-      <header className="mb-6 flex items-start justify-between gap-3">
-        <div>
-          <Link to="/" className="text-sm text-indigo-400 hover:text-indigo-300">
-            ← LocateMe
-          </Link>
-          <h1 className="mt-1 text-2xl font-bold text-white">Owner dashboard</h1>
-          <p className="mt-1 text-sm text-emerald-400">{user.email}</p>
-        </div>
-        <button
-          type="button"
-          onClick={logout}
-          className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/60 hover:bg-white/5"
-        >
-          Sign out
-        </button>
-      </header>
+    <div className="page-shell">
+      <div className="page-container max-w-2xl">
+        <header className="mb-6 flex items-start justify-between gap-3">
+          <div>
+            <button type="button" onClick={() => setOwnerMode(null)} className="nav-back">
+              ← Back
+            </button>
+            <h1 className="page-title mt-2">
+              {isGoogleMode ? 'Owner hub' : 'Manual destination'}
+            </h1>
+            {isGoogleMode && user && (
+              <p className="mt-1 text-sm text-emerald-400">{user.email}</p>
+            )}
+          </div>
+          {isGoogleMode && user && (
+            <button type="button" onClick={logout} className="btn-ghost text-xs">
+              Sign out
+            </button>
+          )}
+        </header>
 
-      <AccountDevicesPanel
-        devices={devices}
-        currentDeviceId={deviceId}
-        userEmail={user.email}
-      />
+        {isGoogleMode && user && (
+          <>
+            <AccountDevicesPanel
+              devices={devices}
+              currentDeviceId={deviceId}
+              userEmail={user.email}
+            />
+            <GlassCard className="mt-4">
+              <label className="field-label">This device name</label>
+              <input
+                type="text"
+                value={deviceLabel}
+                onChange={(e) => setDeviceLabelState(e.target.value)}
+                onBlur={() => setDeviceLabel(deviceLabel)}
+                className="field-input"
+              />
+            </GlassCard>
+            {!tracking ? (
+              <GlassCard className="mt-4 text-center">
+                <p className="text-sm text-white/60">Register this phone on your Google account.</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    requestPermission();
+                    setTracking(true);
+                  }}
+                  className="btn-secondary mt-4 w-full"
+                >
+                  Allow location on this device
+                </button>
+                {geoError && <p className="mt-2 text-sm text-red-400">{geoError}</p>}
+              </GlassCard>
+            ) : null}
+          </>
+        )}
 
-      <GlassCard className="mt-4">
-        <label className="mb-1 block text-xs font-medium uppercase tracking-widest text-white/50">
-          This device name
-        </label>
-        <input
-          type="text"
-          value={deviceLabel}
-          onChange={(e) => setDeviceLabelState(e.target.value)}
-          onBlur={() => setDeviceLabel(deviceLabel)}
-          className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-2.5 text-white"
-        />
-      </GlassCard>
+        {shareUrl ? (
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-6 space-y-6">
+            <GlassCard glow className="text-center">
+              <p className="field-label">Destination code</p>
+              <p className="code-display">{shareId}</p>
+              <p className="mt-2 text-xs text-white/50">
+                Visitor enters this on /join, or scans the QR below
+              </p>
+            </GlassCard>
 
-      {!tracking ? (
-        <GlassCard className="mt-4 text-center">
-          <p className="text-sm text-white/60">Register this phone on your Google account.</p>
-          <button
-            type="button"
-            onClick={() => {
-              requestPermission();
-              setTracking(true);
-            }}
-            className="mt-4 w-full rounded-xl bg-white/10 py-3 text-sm font-semibold text-white hover:bg-white/15"
-          >
-            Allow location on this device
-          </button>
-          {geoError && <p className="mt-2 text-sm text-red-400">{geoError}</p>}
-        </GlassCard>
-      ) : geoLoading && !position ? (
-        <GlassCard className="mt-4 text-center">
-          <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
-        </GlassCard>
-      ) : null}
+            {isGoogleMode &&
+              remoteDevices.map((device) => (
+                <LiveDistanceMeter
+                  key={device.deviceId}
+                  title={device.viaJoin ? 'Joined device' : 'Google device'}
+                  subtitle={`📱 ${device.label || 'Device'}`}
+                  destination={savedDestination}
+                  remotePosition={device}
+                />
+              ))}
 
-      {shareUrl ? (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-6 space-y-6">
-          {remoteDevices.map((device) => (
-            <LiveDistanceMeter
-              key={device.deviceId}
-              title="Google account device"
-              subtitle={`📱 ${device.label || 'Connected device'}`}
+            <OwnerLiveTracker
+              locationId={shareId}
               destination={savedDestination}
-              remotePosition={device}
-              waitingMessage="Waiting for GPS…"
-              emptyMessage=""
+              shareUrl={shareUrl}
+              onCopy={handleCopy}
+              copied={copied}
             />
-          ))}
 
-          <OwnerLiveTracker
-            locationId={shareId}
-            destination={savedDestination}
-            shareUrl={shareUrl}
-            onCopy={handleCopy}
-            copied={copied}
-          />
-
-          <OwnerVisitorAlert locationId={shareId} />
-
-          <QRCodeDisplay url={shareUrl} name={name} />
-
-          <button
-            type="button"
-            onClick={() => {
-              setShareUrl(null);
-              setShareId(null);
-              setSavedDestination(null);
-            }}
-            className="w-full rounded-xl border border-white/10 py-3 text-white/60 hover:bg-white/5"
-          >
-            Create Another
-          </button>
-        </motion.div>
-      ) : (
-        <div className="mt-6 space-y-6">
-          <GlassCard>
-            <p className="mb-3 text-xs font-medium uppercase tracking-widest text-white/50">
-              Destination
-            </p>
-            <div className="mb-4 grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <span className="text-white/40">Lat</span>
-                <p className="font-mono text-white">{lat.toFixed(6)}</p>
-              </div>
-              <div>
-                <span className="text-white/40">Lng</span>
-                <p className="font-mono text-white">{lng.toFixed(6)}</p>
-              </div>
-              <div>
-                <span className="text-white/40">Radius</span>
-                <p className="text-white">{radius >= 1000 ? `${radius / 1000} km` : `${radius} m`}</p>
-              </div>
-            </div>
-
-            <LiveMap
-              destination={{ lat, lng }}
-              radiusMeters={radius}
-              onMapClick={handleMapClick}
-              height="280px"
-            />
+            <OwnerVisitorAlert locationId={shareId} />
+            <QRCodeDisplay url={shareUrl} name={name} />
 
             <button
               type="button"
-              onClick={fetchLocation}
-              disabled={gpsLoading}
-              className="mt-4 w-full rounded-xl bg-white/10 py-2.5 text-sm font-medium text-white hover:bg-white/15 disabled:opacity-50"
+              onClick={() => {
+                setShareUrl(null);
+                setShareId(null);
+                setSavedDestination(null);
+              }}
+              className="btn-secondary w-full"
             >
-              {gpsLoading ? 'Getting location…' : '📍 Use My Location'}
+              Create another
             </button>
-          </GlassCard>
+          </motion.div>
+        ) : (
+          <div className="mt-6 space-y-6">
+            <GlassCard>
+              <p className="field-label mb-3">Pick destination</p>
+              <LiveMap
+                destination={{ lat, lng }}
+                radiusMeters={radius}
+                onMapClick={handleMapClick}
+                height="280px"
+              />
+              <button
+                type="button"
+                onClick={fetchLocation}
+                disabled={gpsLoading}
+                className="btn-secondary mt-4 w-full"
+              >
+                {gpsLoading ? 'Getting location…' : '📍 Use my location'}
+              </button>
+            </GlassCard>
 
-          <GlassCard>
-            <label className="mb-2 block text-xs font-medium uppercase tracking-widest text-white/50">
-              Radius
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {RADIUS_OPTIONS.map(({ label, value }) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setRadius(value)}
-                  className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
-                    radius === value ? 'bg-indigo-600 text-white' : 'bg-white/10 text-white/70'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </GlassCard>
+            <GlassCard>
+              <p className="field-label mb-2">Radius</p>
+              <div className="chip-row">
+                {RADIUS_OPTIONS.map(({ label, value }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setRadius(value)}
+                    className={radius === value ? 'chip chip-active' : 'chip'}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </GlassCard>
 
-          <GlassCard>
-            <label className="mb-2 block text-xs font-medium uppercase tracking-widest text-white/50">
-              Name
-            </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Library, Home"
-              className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-white placeholder:text-white/30"
-            />
-            <div className="mt-2 flex flex-wrap gap-2">
-              {NAME_PRESETS.map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  onClick={() => setName(preset)}
-                  className="rounded-lg bg-white/5 px-2.5 py-1 text-xs text-white/60 hover:bg-white/10"
-                >
-                  {preset}
-                </button>
-              ))}
-            </div>
+            <GlassCard>
+              <label className="field-label">Name</label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Library, Home"
+                className="field-input"
+              />
+              <div className="chip-row mt-2">
+                {NAME_PRESETS.map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setName(preset)}
+                    className="chip chip-sm"
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
 
-            <label className="mb-2 mt-4 block text-xs font-medium uppercase tracking-widest text-white/50">
-              Description
-            </label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Meet me here!"
-              rows={2}
-              className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-white placeholder:text-white/30"
-            />
+              <label className="field-label mt-4">Description</label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Meet me here!"
+                rows={2}
+                className="field-input"
+              />
 
-            <label className="mb-2 mt-4 block text-xs font-medium uppercase tracking-widest text-white/50">
-              Expiration
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {EXPIRATION_OPTIONS.map(({ label, value }) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setExpiration(value)}
-                  className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
-                    expiration === value ? 'bg-indigo-600 text-white' : 'bg-white/10 text-white/70'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </GlassCard>
+              <p className="field-label mt-4 mb-2">Expiration</p>
+              <div className="chip-row">
+                {EXPIRATION_OPTIONS.map(({ label, value }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setExpiration(value)}
+                    className={expiration === value ? 'chip chip-active' : 'chip'}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </GlassCard>
 
-          {error && (
-            <p className="rounded-xl bg-red-500/20 px-4 py-3 text-sm text-red-300">{error}</p>
-          )}
+            {error && <div className="alert-error">{error}</div>}
 
-          <button
-            type="button"
-            onClick={handleGenerate}
-            disabled={saving}
-            className="w-full rounded-2xl bg-indigo-600 py-4 text-lg font-semibold text-white shadow-lg shadow-indigo-500/30 hover:bg-indigo-500 disabled:opacity-50"
-          >
-            {saving ? 'Generating…' : 'Generate & start tracking'}
-          </button>
+            <button type="button" onClick={handleGenerate} disabled={saving} className="btn-primary w-full py-4 text-lg">
+              {saving ? 'Generating…' : 'Generate QR & code'}
+            </button>
 
-          <p className="text-center text-xs text-white/40">
-            Second phone:{' '}
-            <Link to="/join" className="text-indigo-400">
-              /join
-            </Link>{' '}
-            — same Google account, allow location
-          </p>
-        </div>
-      )}
+            <p className="text-center text-xs text-white/40">
+              Second phone → <Link to="/join" className="text-indigo-400">/join</Link> → sign in → enter code or scan QR
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

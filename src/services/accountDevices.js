@@ -21,7 +21,7 @@ function shouldPublish(position, minIntervalMs = 800, minMoveM = 1) {
   return now - lastPublishRef.time >= minIntervalMs;
 }
 
-export async function publishAccountDevicePosition(uid, deviceId, position) {
+export async function publishAccountDevicePosition(uid, deviceId, position, options = {}) {
   if (!isFirebaseConfigured || !db || !uid || !deviceId || !position) return;
   if (!shouldPublish(position)) return;
 
@@ -40,6 +40,7 @@ export async function publishAccountDevicePosition(uid, deviceId, position) {
       accuracy: position.accuracy ?? null,
       speed: position.speed ?? null,
       heading: position.heading ?? null,
+      viaJoin: options.viaJoin ?? false,
       updatedAt: serverTimestamp(),
     },
     { merge: true }
