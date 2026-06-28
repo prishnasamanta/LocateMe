@@ -23,7 +23,6 @@ import GatePrompt from '../components/GatePrompt';
 import {
   publishVisitorPosition,
   setVisitorPresence,
-  subscribeOwnerPosition,
   resetPublishThrottle,
 } from '../services/visitorTracking';
 import { getVisitorDisplayName, setVisitorDisplayName } from '../utils/deviceId';
@@ -40,7 +39,6 @@ export default function Visitor() {
   const [notFound, setNotFound] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [tracking, setTracking] = useState(Boolean(routeLocation.state?.autoTrack));
-  const [ownerPosition, setOwnerPosition] = useState(null);
   const [gateConfirmed, setGateConfirmed] = useState(false);
   const [showGatePrompt, setShowGatePrompt] = useState(false);
   const [visitorName, setVisitorNameState] = useState(getVisitorDisplayName());
@@ -68,10 +66,9 @@ export default function Visitor() {
   const gpsOnlyResult =
     position && destination
       ? computeTrackingDistance(position, destination, {
-          ownerPosition,
           radiusM: destination.radius,
         })
-      : { distanceM: null, source: 'none' };
+      : { distanceM: null, source: 'none', pinDistM: null };
 
   const {
     reading: bleReading,
@@ -81,18 +78,17 @@ export default function Visitor() {
     scanError: bleScanError,
     startScan: startBleScan,
   } = useBleProximity({
-    gpsDistanceM: gpsOnlyResult.distanceM,
+    gpsDistanceM: gpsOnlyResult.pinDistM ?? gpsOnlyResult.distanceM,
     scanToken: id,
   });
 
   const trackingResult =
     position && destination
       ? computeTrackingDistance(position, destination, {
-          ownerPosition,
           radiusM: destination.radius,
           bleDistanceM: bleReading?.distanceM ?? null,
         })
-      : { distanceM: null, inCoverage: false, accuracyM: null, source: 'none' };
+      : { distanceM: null, inCoverage: false, accuracyM: null, source: 'none', pinDistM: null };
 
   const { distanceM, inCoverage, accuracyM, source: distanceSource } = trackingResult;
 
@@ -161,11 +157,6 @@ export default function Visitor() {
   }, [routeLocation.state?.autoTrack, requestPermission]);
 
   useEffect(() => {
-    if (!id) return;
-    return subscribeOwnerPosition(id, setOwnerPosition);
-  }, [id]);
-
-  useEffect(() => {
     if (distanceM == null) return;
     if (initialDistanceRef.current == null) {
       initialDistanceRef.current = distanceM;
@@ -180,6 +171,12 @@ export default function Visitor() {
   useEffect(() => {
     if (tracking) resetPublishThrottle();
   }, [tracking]);
+
+  useEffect(() => {
+    if (inCoverage && !gateConfirmed && !showGatePrompt && tracking && position) {
+      setShowGatePrompt(true);
+    }
+  }, [inCoverage, gateConfirmed, showGatePrompt, tracking, position]);
 
   if (loading) {
     return (

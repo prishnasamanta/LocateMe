@@ -19,14 +19,13 @@ import { saveLocation } from '../services/locations';
 import { getShareUrl } from '../utils/idGenerator';
 import { isFirebaseConfigured } from '../firebase/config';
 import { formatAuthError } from '../utils/authErrors';
-import { getDeviceId, getDeviceLabel, setDeviceLabel } from '../utils/deviceId';
+import { getDeviceId, getDeviceLabel, setDeviceLabel, setAccountRole, isJoinerAccount } from '../utils/deviceId';
 import {
   publishAccountDevicePosition,
   setAccountDevicePresence,
   subscribeAccountDevices,
   saveAccountDestination,
   resetAccountPublishThrottle,
-  isDeviceOnline,
 } from '../services/accountDevices';
 import {
   subscribeVisitorPosition,
@@ -35,6 +34,7 @@ import {
   setOwnerPresence,
 } from '../services/visitorTracking';
 import { normalizeSpeedKmh } from '../utils/trackingDistance';
+import { subscribePairedDevices, getPairedDeviceIds } from '../services/pairing';
 
 const RADIUS_OPTIONS = [
   { label: '10m', value: 10 },
@@ -76,6 +76,9 @@ export default function Owner() {
   const [tracking, setTracking] = useState(false);
   const [devices, setDevices] = useState([]);
   const [linkVisitor, setLinkVisitor] = useState(null);
+  const [pairedDevices, setPairedDevices] = useState([]);
+  const [pairKey, setPairKey] = useState(null);
+  const [pairKeyCopied, setPairKeyCopied] = useState(false);
   const [deviceLabel, setDeviceLabelState] = useState(getDeviceLabel());
 
   const deviceId = getDeviceId();
@@ -146,6 +149,14 @@ export default function Owner() {
     return subscribeVisitorPosition(shareId, setLinkVisitor);
   }, [shareId]);
 
+  useEffect(() => {
+    if (!shareId) return;
+    return subscribePairedDevices(shareId, setPairedDevices);
+  }, [shareId]);
+
+  const pairedDeviceIds = getPairedDeviceIds(pairedDevices);
+  const pairedAccountDevices = devices.filter((d) => pairedDeviceIds.includes(d.deviceId));
+
   const publishOwnerLive = useCallback(() => {
     if (!shareId) return;
     const meta = { presence: ownerPresence, battery, network };
@@ -171,8 +182,6 @@ export default function Owner() {
   }, [shareUrl, tracking, requestPermission]);
 
   const visitorConnected = isVisitorOnline(linkVisitor);
-
-  const remoteDevices = devices.filter((d) => d.deviceId !== deviceId && isDeviceOnline(d));
 
   const handleMapClick = ({ lat: newLat, lng: newLng }) => {
     setLat(newLat);
@@ -217,7 +226,9 @@ export default function Owner() {
       const url = getShareUrl(result.id, result.encodedPayload);
       setShareId(result.id);
       setShareUrl(url);
+      setPairKey(result.pairKey ?? null);
       setSavedDestination({ lat, lng, radius, altitude, name: name.trim() });
+      setAccountRole('owner');
     } catch (err) {
       setError(err.message || 'Failed to save location');
     } finally {
@@ -230,6 +241,36 @@ export default function Owner() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  const handleCopyPairKey = async () => {
+    if (!pairKey) return;
+    await navigator.clipboard.writeText(pairKey);
+    setPairKeyCopied(true);
+    setTimeout(() => setPairKeyCopied(false), 2000);
+  };
+
+  if (isJoinerAccount() && ownerMode) {
+    return (
+      <div className="page-shell">
+        <div className="page-container max-w-md">
+          <Link to="/" className="nav-back">
+            ← LocateMe
+          </Link>
+          <GlassCard glow className="mt-6 text-center">
+            <span className="hero-icon">🔒</span>
+            <h1 className="page-title mt-4">Owner access only</h1>
+            <p className="page-subtitle mt-2">
+              This Google account is registered as a joined device. Use the owner phone to create
+              destinations, or go to /join to pair again.
+            </p>
+            <Link to="/join" className="btn-primary mt-6 inline-block">
+              Go to Join
+            </Link>
+          </GlassCard>
+        </div>
+      </div>
+    );
+  }
 
   if (!ownerMode) {
     return (
@@ -385,13 +426,39 @@ export default function Owner() {
 
         {shareUrl ? (
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-6 space-y-6">
-            {!visitorConnected && (
+            {isGoogleMode && user && (
+              <AccountDevicesPanel
+                devices={devices}
+                currentDeviceId={deviceId}
+                userEmail={user.email}
+                pairedDeviceIds={pairedDeviceIds}
+                title="Google account devices"
+                subtitle="Phones logged into this Gmail. Paired devices show live distance below."
+                sectionUnpaired="Logged in — not paired to this destination"
+                sectionPaired="Paired to this destination"
+              />
+            )}
+
+            {!visitorConnected && pairedAccountDevices.length === 0 && (
               <>
                 <GlassCard glow className="text-center">
                   <p className="field-label">Destination code</p>
                   <p className="code-display">{shareId}</p>
-                  <p className="mt-2 text-xs text-white/50">
-                    Visitor enters this on /join, or scans the QR below
+                  {pairKey && (
+                    <>
+                      <p className="field-label mt-4">Pair key (required on /join)</p>
+                      <p className="code-display text-amber-300">{pairKey}</p>
+                      <button
+                        type="button"
+                        onClick={handleCopyPairKey}
+                        className="btn-secondary mt-3 px-6 py-2 text-sm"
+                      >
+                        {pairKeyCopied ? 'Copied!' : 'Copy pair key'}
+                      </button>
+                    </>
+                  )}
+                  <p className="mt-3 text-xs text-white/50">
+                    Second phone → /join → Google sign-in → code + pair key
                   </p>
                 </GlassCard>
 
@@ -409,41 +476,27 @@ export default function Owner() {
               </>
             )}
 
-            {visitorConnected && (
-              <>
-                {isGoogleMode && (
-                  <AccountDevicesPanel
-                    devices={devices}
-                    currentDeviceId={deviceId}
-                    userEmail={user?.email}
-                  />
-                )}
-                <LinkVisitorPanel visitor={linkVisitor} />
-              </>
-            )}
+            {visitorConnected && <LinkVisitorPanel visitor={linkVisitor} />}
 
-            {isGoogleMode &&
-              visitorConnected &&
-              remoteDevices.map((device) => (
-                <LiveDistanceMeter
-                  key={device.deviceId}
-                  title={device.viaJoin ? 'Joined device' : 'Google device'}
-                  subtitle={`📱 ${device.label || 'Device'}`}
-                  destination={savedDestination}
-                  remotePosition={device}
-                />
-              ))}
+            {pairedAccountDevices.map((device) => (
+              <LiveDistanceMeter
+                key={device.deviceId}
+                title="Paired device"
+                subtitle={`📱 ${device.label || 'Device'}`}
+                destination={savedDestination}
+                remotePosition={device}
+              />
+            ))}
 
             <OwnerLiveTracker
               destination={savedDestination}
               visitorPos={linkVisitor}
-              ownerPosition={position}
               locationId={shareId}
             />
 
             <OwnerVisitorAlert locationId={shareId} />
 
-            {!visitorConnected && (
+            {!visitorConnected && pairedAccountDevices.length === 0 && (
               <button
                 type="button"
                 onClick={() => {
@@ -451,6 +504,8 @@ export default function Owner() {
                   setShareId(null);
                   setSavedDestination(null);
                   setLinkVisitor(null);
+                  setPairKey(null);
+                  setPairedDevices([]);
                 }}
                 className="btn-secondary w-full"
               >
@@ -556,7 +611,7 @@ export default function Owner() {
             </button>
 
             <p className="text-center text-xs text-white/40">
-              Second phone → <Link to="/join" className="text-indigo-400">/join</Link> → sign in → enter code or scan QR
+              Second phone → <Link to="/join" className="text-indigo-400">/join</Link> → Google → code + pair key
             </p>
           </div>
         )}

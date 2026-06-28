@@ -18,7 +18,7 @@ export default function Home() {
           LocateMe
         </h1>
         <p className="page-subtitle mt-4 text-base">
-          Google device hub for owners. QR & code pairing for visitors. Live GPS on every move.
+          Google device hub for owners. Pair second phones with code + key. Live GPS distance to your pin.
         </p>
 
         <div className="mt-10 flex flex-col gap-3">
@@ -33,8 +33,8 @@ export default function Home() {
         <div className="mt-16 grid grid-cols-1 gap-4 text-left sm:grid-cols-3">
           {[
             { icon: '🔐', title: 'Google hub', desc: 'All devices on your Gmail' },
-            { icon: '📷', title: 'QR or code', desc: 'Pair any second phone' },
-            { icon: '📡', title: 'Live GPS', desc: 'Updates as you move' },
+            { icon: '🔑', title: 'Code + pair key', desc: 'Secure second-device join' },
+            { icon: '📡', title: 'Live GPS', desc: 'Real distance to your pin' },
           ].map(({ icon, title, desc }) => (
             <div
               key={title}

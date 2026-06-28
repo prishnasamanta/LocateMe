@@ -9,6 +9,8 @@ import {
 import { db, isFirebaseConfigured } from '../firebase/config';
 import { generateShortId, normalizeShareId } from '../utils/idGenerator';
 import { encodeLocationPayload, decodeLocationPayload } from '../utils/locationPayload';
+import { generatePairKey } from '../utils/pairKey';
+import { storeLocalPairKey } from './pairing';
 
 const LOCAL_KEY = 'locateme_locations';
 
@@ -132,6 +134,7 @@ export async function saveLocation(locationData) {
 
   const location = { id, ...payload };
   const encodedPayload = encodeLocationPayload(location);
+  const pairKey = generatePairKey();
 
   if (isFirebaseConfigured && db) {
     try {
@@ -142,20 +145,23 @@ export async function saveLocation(locationData) {
       });
       await setDoc(doc(db, 'shareCodes', id), {
         d: encodedPayload,
+        pairKey,
         createdAt: serverTimestamp(),
       });
     } catch {
       const store = readLocalStore();
       store[id] = payload;
       writeLocalStore(store);
+      storeLocalPairKey(id, pairKey);
     }
   } else {
     const store = readLocalStore();
     store[id] = payload;
     writeLocalStore(store);
+    storeLocalPairKey(id, pairKey);
   }
 
-  return { ...location, encodedPayload };
+  return { ...location, encodedPayload, pairKey };
 }
 
 export async function locationExists(id) {

@@ -2,14 +2,13 @@ import { haversineDistance } from './haversine';
 import { GPS_BLE_THRESHOLD_M } from './bleDistance';
 
 /**
- * Find My Device-style switching:
- * > 20 m → GPS to destination/owner
- * ≤ 20 m → nearby GPS (device pair) or BLE RSSI when available
+ * Primary distance is always visitor → destination pin.
+ * BLE refines only when already within the destination coverage threshold.
  */
 export function computeTrackingDistance(
   visitor,
   destination,
-  { ownerPosition, radiusM = 500, bleDistanceM = null, gpsDistanceM = null } = {}
+  { radiusM = 500, bleDistanceM = null } = {}
 ) {
   if (visitor?.lat == null || visitor?.lng == null || destination?.lat == null) {
     return { distanceM: null, source: 'none', accuracyM: null, inCoverage: false, pinDistM: null };
@@ -19,20 +18,11 @@ export function computeTrackingDistance(
     haversineDistance(visitor.lat, visitor.lng, destination.lat, destination.lng) * 1000;
   const visitorAcc = visitor.accuracy ?? null;
   const inCoverage = pinDistM <= radiusM;
-
-  let deviceDistM = null;
-  let ownerAcc = null;
-  if (ownerPosition?.lat != null) {
-    deviceDistM =
-      haversineDistance(visitor.lat, visitor.lng, ownerPosition.lat, ownerPosition.lng) * 1000;
-    ownerAcc = ownerPosition.accuracy ?? null;
-  }
-
-  const referenceGpsM = deviceDistM ?? pinDistM;
+  const roundedPin = Math.round(pinDistM);
 
   if (
+    pinDistM <= GPS_BLE_THRESHOLD_M &&
     bleDistanceM != null &&
-    referenceGpsM <= GPS_BLE_THRESHOLD_M &&
     Number.isFinite(bleDistanceM)
   ) {
     return {
@@ -40,47 +30,16 @@ export function computeTrackingDistance(
       source: 'ble',
       accuracyM: 2,
       inCoverage,
-      pinDistM: Math.round(pinDistM),
-    };
-  }
-
-  if (deviceDistM != null && deviceDistM <= GPS_BLE_THRESHOLD_M) {
-    const accuracyM =
-      visitorAcc != null && ownerAcc != null
-        ? Math.round((visitorAcc + ownerAcc) / 2)
-        : visitorAcc ?? ownerAcc ?? null;
-    return {
-      distanceM: Math.round(deviceDistM),
-      source: 'nearby-gps',
-      accuracyM,
-      inCoverage,
-      pinDistM: Math.round(pinDistM),
-    };
-  }
-
-  if (
-    deviceDistM != null &&
-    (deviceDistM <= 300 || (inCoverage && deviceDistM <= pinDistM + 30))
-  ) {
-    const accuracyM =
-      visitorAcc != null && ownerAcc != null
-        ? Math.round((visitorAcc + ownerAcc) / 2)
-        : visitorAcc ?? ownerAcc ?? null;
-    return {
-      distanceM: Math.round(deviceDistM),
-      source: 'devices',
-      accuracyM,
-      inCoverage,
-      pinDistM: Math.round(pinDistM),
+      pinDistM: roundedPin,
     };
   }
 
   return {
-    distanceM: Math.round(pinDistM),
+    distanceM: roundedPin,
     source: 'destination',
     accuracyM: visitorAcc != null ? Math.round(visitorAcc) : null,
     inCoverage,
-    pinDistM: Math.round(pinDistM),
+    pinDistM: roundedPin,
   };
 }
 

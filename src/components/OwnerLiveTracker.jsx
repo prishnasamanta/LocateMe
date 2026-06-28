@@ -17,7 +17,7 @@ function parseUpdatedAt(iso) {
   return typeof iso === 'string' ? new Date(iso) : iso;
 }
 
-export default function OwnerLiveTracker({ destination, visitorPos, ownerPosition, locationId }) {
+export default function OwnerLiveTracker({ destination, visitorPos, locationId }) {
   const [pulse, setPulse] = useState(false);
   const [ringing, setRinging] = useState(false);
   const [ringBusy, setRingBusy] = useState(false);
@@ -29,7 +29,6 @@ export default function OwnerLiveTracker({ destination, visitorPos, ownerPositio
   }, [locationId]);
 
   const tracking = computeTrackingDistance(visitorPos, destination, {
-    ownerPosition,
     radiusM: destination?.radius ?? 500,
     bleDistanceM: visitorPos?.bleDistanceM ?? null,
   });

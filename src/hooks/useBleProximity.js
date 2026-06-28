@@ -50,7 +50,7 @@ export function useBleProximity({ gpsDistanceM, scanToken }) {
         if (rssi == null) return;
         const name = event.device?.name || '';
         const tokenMatch = scanToken && name.toUpperCase().includes(String(scanToken).slice(0, 4));
-        if (tokenMatch || rssi > -75) {
+        if (tokenMatch) {
           setReading({
             rssi,
             distanceM: rssiToDistanceM(rssi),

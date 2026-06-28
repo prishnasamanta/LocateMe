@@ -17,6 +17,10 @@ service cloud.firestore {
       match /status/{doc} {
         allow read, write: if true;
       }
+
+      match /pairs/{deviceId} {
+        allow read, write: if true;
+      }
     }
 
     match /users/{uid}/{document=**} {

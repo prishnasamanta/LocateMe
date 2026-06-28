@@ -23,6 +23,20 @@ export function getDefaultDeviceLabel() {
 }
 
 const DEVICE_LABEL_KEY = 'locateme_device_label';
+const ACCOUNT_ROLE_KEY = 'locateme_account_role';
+
+export function getAccountRole() {
+  return localStorage.getItem(ACCOUNT_ROLE_KEY);
+}
+
+export function setAccountRole(role) {
+  if (role) localStorage.setItem(ACCOUNT_ROLE_KEY, role);
+  else localStorage.removeItem(ACCOUNT_ROLE_KEY);
+}
+
+export function isJoinerAccount() {
+  return getAccountRole() === 'joiner';
+}
 
 export function getDeviceLabel() {
   return localStorage.getItem(DEVICE_LABEL_KEY) || getDefaultDeviceLabel();
