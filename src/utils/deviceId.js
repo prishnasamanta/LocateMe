@@ -1,0 +1,33 @@
+const DEVICE_ID_KEY = 'locateme_device_id';
+
+export function getDeviceId() {
+  let id = localStorage.getItem(DEVICE_ID_KEY);
+  if (!id) {
+    id =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `dev-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    localStorage.setItem(DEVICE_ID_KEY, id);
+  }
+  return id;
+}
+
+export function getDefaultDeviceLabel() {
+  const ua = navigator.userAgent;
+  if (/iPhone/i.test(ua)) return 'iPhone';
+  if (/iPad/i.test(ua)) return 'iPad';
+  if (/Android/i.test(ua)) return 'Android';
+  if (/Macintosh/i.test(ua)) return 'Mac';
+  if (/Windows/i.test(ua)) return 'Windows';
+  return 'This device';
+}
+
+const DEVICE_LABEL_KEY = 'locateme_device_label';
+
+export function getDeviceLabel() {
+  return localStorage.getItem(DEVICE_LABEL_KEY) || getDefaultDeviceLabel();
+}
+
+export function setDeviceLabel(label) {
+  localStorage.setItem(DEVICE_LABEL_KEY, label.trim() || getDefaultDeviceLabel());
+}
