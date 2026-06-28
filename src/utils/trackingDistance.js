@@ -1,11 +1,16 @@
 import { haversineDistance } from './haversine';
-
-const DEVICE_PAIR_THRESHOLD_M = 300;
+import { GPS_BLE_THRESHOLD_M } from './bleDistance';
 
 /**
- * Prefer live device-to-device distance when owner GPS is available and devices are near each other.
+ * Find My Device-style switching:
+ * > 20 m → GPS to destination/owner
+ * ≤ 20 m → nearby GPS (device pair) or BLE RSSI when available
  */
-export function computeTrackingDistance(visitor, destination, { ownerPosition, radiusM = 500 } = {}) {
+export function computeTrackingDistance(
+  visitor,
+  destination,
+  { ownerPosition, radiusM = 500, bleDistanceM = null, gpsDistanceM = null } = {}
+) {
   if (!visitor?.lat || !destination?.lat) {
     return { distanceM: null, source: 'none', accuracyM: null, inCoverage: false };
   }
@@ -22,12 +27,39 @@ export function computeTrackingDistance(visitor, destination, { ownerPosition, r
     ownerAcc = ownerPosition.accuracy ?? null;
   }
 
+  const referenceGpsM = deviceDistM ?? pinDistM;
   const inCoverage = pinDistM <= radiusM;
-  const useDevicePair =
-    deviceDistM != null &&
-    (deviceDistM <= DEVICE_PAIR_THRESHOLD_M || (inCoverage && deviceDistM <= pinDistM + 30));
 
-  if (useDevicePair) {
+  if (
+    bleDistanceM != null &&
+    referenceGpsM <= GPS_BLE_THRESHOLD_M &&
+    Number.isFinite(bleDistanceM)
+  ) {
+    return {
+      distanceM: Math.round(bleDistanceM),
+      source: 'ble',
+      accuracyM: 2,
+      inCoverage: bleDistanceM <= radiusM || inCoverage,
+    };
+  }
+
+  if (deviceDistM != null && deviceDistM <= GPS_BLE_THRESHOLD_M) {
+    const accuracyM =
+      visitorAcc != null && ownerAcc != null
+        ? Math.round((visitorAcc + ownerAcc) / 2)
+        : visitorAcc ?? ownerAcc ?? null;
+    return {
+      distanceM: Math.round(deviceDistM),
+      source: 'nearby-gps',
+      accuracyM,
+      inCoverage: deviceDistM <= radiusM || inCoverage,
+    };
+  }
+
+  if (
+    deviceDistM != null &&
+    (deviceDistM <= 300 || (inCoverage && deviceDistM <= pinDistM + 30))
+  ) {
     const accuracyM =
       visitorAcc != null && ownerAcc != null
         ? Math.round((visitorAcc + ownerAcc) / 2)
@@ -48,7 +80,6 @@ export function computeTrackingDistance(visitor, destination, { ownerPosition, r
   };
 }
 
-/** Smooth jitter when nearly stationary (reduces 40–60m bounce). */
 export function smoothPosition(prev, next, speedKmh) {
   if (!next) return next;
   if (!prev || speedKmh == null || speedKmh > 2) return next;

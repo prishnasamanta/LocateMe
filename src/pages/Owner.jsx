@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import LiveMap from '../components/LiveMap';
@@ -12,6 +12,8 @@ import LiveDistanceMeter from '../components/LiveDistanceMeter';
 import AccountDevicesPanel from '../components/AccountDevicesPanel';
 import GoogleSignInButton from '../components/GoogleSignInButton';
 import { useCurrentLocation, useGeolocation } from '../hooks/useGeolocation';
+import { useDeviceInfo } from '../hooks/useDeviceInfo';
+import { useDevicePresence, usePresenceHeartbeat } from '../hooks/useDevicePresence';
 import { useAuth } from '../hooks/useAuth';
 import { saveLocation } from '../services/locations';
 import { getShareUrl } from '../utils/idGenerator';
@@ -20,12 +22,19 @@ import { formatAuthError } from '../utils/authErrors';
 import { getDeviceId, getDeviceLabel, setDeviceLabel } from '../utils/deviceId';
 import {
   publishAccountDevicePosition,
+  setAccountDevicePresence,
   subscribeAccountDevices,
   saveAccountDestination,
   resetAccountPublishThrottle,
-  isDeviceStale,
+  isDeviceOnline,
 } from '../services/accountDevices';
-import { subscribeVisitorPosition, isVisitorOnline, publishOwnerPosition } from '../services/visitorTracking';
+import {
+  subscribeVisitorPosition,
+  isVisitorOnline,
+  publishOwnerPosition,
+  setOwnerPresence,
+} from '../services/visitorTracking';
+import { normalizeSpeedKmh } from '../utils/trackingDistance';
 
 const RADIUS_OPTIONS = [
   { label: '10m', value: 10 },
@@ -74,8 +83,11 @@ export default function Owner() {
   const { position: gpsPosition, fetchLocation, loading: gpsLoading, error: gpsError } =
     useCurrentLocation();
   const geoEnabled = tracking || Boolean(shareUrl);
-  const { position, error: geoError, loading: geoLoading, requestPermission } =
+  const { position, error: geoError, loading: geoLoading, speed, requestPermission } =
     useGeolocation(geoEnabled);
+  const { battery, network } = useDeviceInfo();
+  const ownerPresence = useDevicePresence(geoEnabled);
+  const ownerSpeedKmh = normalizeSpeedKmh(position, speed);
 
   const isGoogleMode = ownerMode === 'google';
 
@@ -86,8 +98,32 @@ export default function Owner() {
 
   useEffect(() => {
     if (!isGoogleMode || !tracking || !position || !user?.uid) return;
-    publishAccountDevicePosition(user.uid, deviceId, position, { viaJoin: false }).catch(() => {});
-  }, [isGoogleMode, tracking, position, user?.uid, deviceId]);
+    publishAccountDevicePosition(user.uid, deviceId, position, {
+      viaJoin: false,
+      presence: ownerPresence,
+      battery,
+      network,
+      speedKmh: ownerSpeedKmh,
+    }).catch(() => {});
+  }, [
+    isGoogleMode,
+    tracking,
+    position,
+    user?.uid,
+    deviceId,
+    ownerPresence,
+    battery,
+    network,
+    ownerSpeedKmh,
+  ]);
+
+  useEffect(() => {
+    if (!isGoogleMode || !user?.uid || !tracking) return;
+    setAccountDevicePresence(user.uid, deviceId, ownerPresence, {
+      battery,
+      network,
+    }).catch(() => {});
+  }, [isGoogleMode, user?.uid, deviceId, ownerPresence, battery, network, tracking]);
 
   useEffect(() => {
     if (tracking) resetAccountPublishThrottle();
@@ -110,10 +146,22 @@ export default function Owner() {
     return subscribeVisitorPosition(shareId, setLinkVisitor);
   }, [shareId]);
 
+  const publishOwnerLive = useCallback(() => {
+    if (!shareId) return;
+    const meta = { presence: ownerPresence, battery, network };
+    if (position) {
+      publishOwnerPosition(shareId, position, meta).catch(() => {});
+    } else {
+      setOwnerPresence(shareId, ownerPresence, meta).catch(() => {});
+    }
+  }, [shareId, position, ownerPresence, battery, network]);
+
+  usePresenceHeartbeat(Boolean(shareId), ownerPresence, 10000, publishOwnerLive);
+
   useEffect(() => {
-    if (!shareId || !position) return;
-    publishOwnerPosition(shareId, position).catch(() => {});
-  }, [shareId, position]);
+    if (!shareId) return;
+    publishOwnerLive();
+  }, [shareId, ownerPresence, publishOwnerLive]);
 
   useEffect(() => {
     if (shareUrl && !tracking) {
@@ -124,7 +172,7 @@ export default function Owner() {
 
   const visitorConnected = isVisitorOnline(linkVisitor);
 
-  const remoteDevices = devices.filter((d) => d.deviceId !== deviceId && !isDeviceStale(d));
+  const remoteDevices = devices.filter((d) => d.deviceId !== deviceId && isDeviceOnline(d));
 
   const handleMapClick = ({ lat: newLat, lng: newLng }) => {
     setLat(newLat);

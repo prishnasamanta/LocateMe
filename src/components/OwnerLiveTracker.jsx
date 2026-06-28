@@ -7,6 +7,8 @@ import { computeTrackingDistance } from '../utils/trackingDistance';
 import { formatLiveDistance, getVerticalHint } from '../utils/relativePosition';
 import { formatArrivalSentence } from '../utils/arrivalHint';
 import { getMotionStatus } from '../utils/motionStatus';
+import { getTrackingModeLabel, getPresenceLabel } from '../utils/bleDistance';
+import { isVisitorOnline, getVisitorPresence } from '../services/visitorTracking';
 import { formatRelativeTime } from '../utils/helpers';
 import { startVisitorRing, stopVisitorRing, subscribeVisitorRing } from '../services/visitorRing';
 
@@ -29,10 +31,12 @@ export default function OwnerLiveTracker({ destination, visitorPos, ownerPositio
   const tracking = computeTrackingDistance(visitorPos, destination, {
     ownerPosition,
     radiusM: destination?.radius ?? 500,
+    bleDistanceM: visitorPos?.bleDistanceM ?? null,
   });
 
   const { distanceM, inCoverage, source, accuracyM } = tracking;
-  const updatedAt = parseUpdatedAt(visitorPos?.updatedAt);
+  const modeInfo = getTrackingModeLabel(source);
+  const updatedAt = parseUpdatedAt(visitorPos?.updatedAt ?? visitorPos?.heartbeatAt);
   const speedKmh =
     typeof visitorPos?.speed === 'number' && Number.isFinite(visitorPos.speed)
       ? visitorPos.speed
@@ -46,6 +50,8 @@ export default function OwnerLiveTracker({ destination, visitorPos, ownerPositio
     inCoverage && visitorPos
       ? formatArrivalSentence(distanceM, visitorPos, destination, 'owner')
       : null;
+  const visitorOnline = isVisitorOnline(visitorPos);
+  const presenceInfo = getPresenceLabel(getVisitorPresence(visitorPos));
 
   useEffect(() => {
     if (distanceM == null) return;
@@ -85,11 +91,12 @@ export default function OwnerLiveTracker({ destination, visitorPos, ownerPositio
         <div>
           <p className="field-label">Live visitor</p>
           <p className="font-semibold text-white">{visitorPos.displayName || 'Visitor'}</p>
+          <p className="text-xs text-white/40">{presenceInfo.label}</p>
         </div>
         <span
-          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${visitorPos.online !== false ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/10 text-white/40'}`}
+          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${visitorOnline ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/10 text-white/40'}`}
         >
-          {visitorPos.online !== false ? 'online' : 'offline'}
+          {visitorOnline ? 'online' : 'offline'}
         </span>
       </div>
 
@@ -107,7 +114,7 @@ export default function OwnerLiveTracker({ destination, visitorPos, ownerPositio
           </p>
         )}
         <p className="mt-2 text-xs text-white/40">
-          {source === 'devices' ? 'Live device-to-device' : 'To destination pin'}
+          {modeInfo.emoji} {modeInfo.label}
           {accuracyM != null ? ` · ±${accuracyM} m` : ''}
         </p>
       </Motion.div>
@@ -153,6 +160,9 @@ export default function OwnerLiveTracker({ destination, visitorPos, ownerPositio
           lastUpdate={updatedAt}
           battery={visitorPos.battery}
           network={visitorPos.network}
+          presence={getVisitorPresence(visitorPos)}
+          trackingMode={visitorPos.trackingMode ?? source}
+          bleRssi={visitorPos.bleRssi}
         />
       </div>
     </GlassCard>

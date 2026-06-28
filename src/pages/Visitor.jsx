@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useSearchParams, useLocation, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { getLocation } from '../services/locations';
@@ -10,7 +10,10 @@ import {
 } from '../utils/trackingDistance';
 import { useGeolocation } from '../hooks/useGeolocation';
 import { useDeviceInfo } from '../hooks/useDeviceInfo';
+import { useDevicePresence, usePresenceHeartbeat } from '../hooks/useDevicePresence';
+import { useBleProximity } from '../hooks/useBleProximity';
 import { useVisitorRing } from '../hooks/useVisitorRing';
+import { GPS_BLE_THRESHOLD_M } from '../utils/bleDistance';
 import GlassCard from '../components/GlassCard';
 import CoverageCard from '../components/CoverageCard';
 import ProgressBar from '../components/ProgressBar';
@@ -19,6 +22,7 @@ import ArrivalInstructions from '../components/ArrivalInstructions';
 import GatePrompt from '../components/GatePrompt';
 import {
   publishVisitorPosition,
+  setVisitorPresence,
   subscribeOwnerPosition,
   resetPublishThrottle,
 } from '../services/visitorTracking';
@@ -51,12 +55,76 @@ export default function Visitor() {
   } = useGeolocation(tracking);
 
   const { battery, network } = useDeviceInfo();
+  const presence = useDevicePresence(tracking);
   useVisitorRing(id, tracking);
 
   const speedKmh = normalizeSpeedKmh(rawPosition, speed);
   const position = rawPosition
     ? smoothPosition(smoothedRef.current, rawPosition, speedKmh)
     : null;
+
+  const gpsOnlyResult =
+    position && destination
+      ? computeTrackingDistance(position, destination, {
+          ownerPosition,
+          radiusM: destination.radius,
+        })
+      : { distanceM: null, source: 'none' };
+
+  const {
+    reading: bleReading,
+    shouldScan: bleShouldScan,
+    bleSupported,
+    scanning: bleScanning,
+    scanError: bleScanError,
+    startScan: startBleScan,
+  } = useBleProximity({
+    gpsDistanceM: gpsOnlyResult.distanceM,
+    scanToken: id,
+  });
+
+  const trackingResult =
+    position && destination
+      ? computeTrackingDistance(position, destination, {
+          ownerPosition,
+          radiusM: destination.radius,
+          bleDistanceM: bleReading?.distanceM ?? null,
+        })
+      : { distanceM: null, inCoverage: false, accuracyM: null, source: 'none' };
+
+  const { distanceM, inCoverage, accuracyM, source: distanceSource } = trackingResult;
+
+  const publishLive = useCallback(() => {
+    if (!tracking || !id) return;
+    const meta = {
+      displayName: visitorName,
+      speed: speedKmh,
+      battery,
+      network,
+      presence,
+      trackingMode: distanceSource,
+      bleRssi: bleReading?.rssi ?? null,
+      bleDistanceM: bleReading?.distanceM ?? null,
+    };
+    if (position) {
+      publishVisitorPosition(id, position, meta).catch(() => {});
+    } else {
+      setVisitorPresence(id, presence, meta).catch(() => {});
+    }
+  }, [
+    tracking,
+    id,
+    position,
+    visitorName,
+    speedKmh,
+    battery,
+    network,
+    presence,
+    distanceSource,
+    bleReading?.rssi,
+  ]);
+
+  usePresenceHeartbeat(tracking, presence, 10000, publishLive);
 
   useEffect(() => {
     smoothedRef.current = position;
@@ -95,16 +163,6 @@ export default function Visitor() {
     return subscribeOwnerPosition(id, setOwnerPosition);
   }, [id]);
 
-  const trackingResult =
-    position && destination
-      ? computeTrackingDistance(position, destination, {
-          ownerPosition,
-          radiusM: destination.radius,
-        })
-      : { distanceM: null, inCoverage: false, accuracyM: null, source: 'none' };
-
-  const { distanceM, inCoverage, accuracyM, source: distanceSource } = trackingResult;
-
   useEffect(() => {
     if (distanceM == null) return;
     if (initialDistanceRef.current == null) {
@@ -113,14 +171,9 @@ export default function Visitor() {
   }, [distanceM]);
 
   useEffect(() => {
-    if (!tracking || !position || !id) return;
-    publishVisitorPosition(id, position, {
-      displayName: visitorName,
-      speed: speedKmh,
-      battery,
-      network,
-    }).catch(() => {});
-  }, [tracking, position, id, visitorName, speedKmh, battery, network]);
+    if (!tracking || !id) return;
+    publishLive();
+  }, [tracking, id, presence, publishLive]);
 
   useEffect(() => {
     if (tracking) resetPublishThrottle();
@@ -277,6 +330,24 @@ export default function Visitor() {
                   )}
                 </GlassCard>
 
+                {bleShouldScan && bleSupported && distanceSource !== 'ble' && (
+                  <GlassCard>
+                    <p className="text-sm text-white/70">
+                      Within {GPS_BLE_THRESHOLD_M} m — enable Bluetooth for closer accuracy
+                      (Chrome/Android).
+                    </p>
+                    <button
+                      type="button"
+                      onClick={startBleScan}
+                      disabled={bleScanning}
+                      className="btn-secondary mt-3 w-full"
+                    >
+                      {bleScanning ? 'Scanning Bluetooth…' : '📶 Enable nearby Bluetooth'}
+                    </button>
+                    {bleScanError && <p className="mt-2 text-xs text-red-400">{bleScanError}</p>}
+                  </GlassCard>
+                )}
+
                 <DeviceStatsPanel
                   title="Your device"
                   position={position}
@@ -284,6 +355,9 @@ export default function Visitor() {
                   lastUpdate={lastUpdate}
                   battery={battery}
                   network={network}
+                  presence={presence}
+                  trackingMode={distanceSource}
+                  bleRssi={bleReading?.rssi ?? null}
                 />
               </>
             )}

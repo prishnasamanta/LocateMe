@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import GlassCard from '../components/GlassCard';
@@ -6,13 +6,17 @@ import GoogleSignInButton from '../components/GoogleSignInButton';
 import QrUploader from '../components/QrUploader';
 import { useAuth } from '../hooks/useAuth';
 import { useGeolocation } from '../hooks/useGeolocation';
+import { useDeviceInfo } from '../hooks/useDeviceInfo';
+import { useDevicePresence, usePresenceHeartbeat } from '../hooks/useDevicePresence';
 import { isFirebaseConfigured } from '../firebase/config';
 import { formatAuthError } from '../utils/authErrors';
 import { getDeviceId, getDeviceLabel, setDeviceLabel } from '../utils/deviceId';
 import {
   publishAccountDevicePosition,
+  setAccountDevicePresence,
   resetAccountPublishThrottle,
 } from '../services/accountDevices';
+import { normalizeSpeedKmh } from '../utils/trackingDistance';
 import { resolveShareInput } from '../services/locations';
 import { parseShareInput, buildVisitorPath } from '../utils/shareLink';
 
@@ -43,12 +47,42 @@ export default function JoinDevice() {
   const [pairing, setPairing] = useState(false);
 
   const deviceId = getDeviceId();
-  const { position, error: geoError, requestPermission } = useGeolocation(tracking);
+  const { position, error: geoError, speed, requestPermission } = useGeolocation(tracking);
+  const { battery, network } = useDeviceInfo();
+  const presence = useDevicePresence(tracking);
 
   useEffect(() => {
     if (!tracking || !position || !user?.uid) return;
-    publishAccountDevicePosition(user.uid, deviceId, position, { viaJoin: true }).catch(() => {});
-  }, [tracking, position, user?.uid, deviceId]);
+    publishAccountDevicePosition(user.uid, deviceId, position, {
+      viaJoin: true,
+      presence,
+      battery,
+      network,
+      speedKmh: normalizeSpeedKmh(position, speed),
+    }).catch(() => {});
+  }, [tracking, position, user?.uid, deviceId, presence, battery, network, speed]);
+
+  useEffect(() => {
+    if (!user?.uid || !tracking) return;
+    setAccountDevicePresence(user.uid, deviceId, presence, { battery, network }).catch(() => {});
+  }, [user?.uid, deviceId, presence, battery, network, tracking]);
+
+  const heartbeatJoin = useCallback(() => {
+    if (!tracking || !user?.uid || presence !== 'online') return;
+    if (position) {
+      publishAccountDevicePosition(user.uid, deviceId, position, {
+        viaJoin: true,
+        presence: 'online',
+        battery,
+        network,
+        speedKmh: normalizeSpeedKmh(position, speed),
+      }).catch(() => {});
+    } else {
+      setAccountDevicePresence(user.uid, deviceId, 'online', { battery, network }).catch(() => {});
+    }
+  }, [tracking, user?.uid, presence, position, deviceId, battery, network, speed]);
+
+  usePresenceHeartbeat(tracking, presence, 10000, heartbeatJoin);
 
   useEffect(() => {
     if (tracking) resetAccountPublishThrottle();

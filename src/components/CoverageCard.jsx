@@ -4,6 +4,7 @@ import { getProximityStatus } from '../utils/helpers';
 import { formatLiveDistance } from '../utils/relativePosition';
 import { formatArrivalSentence } from '../utils/arrivalHint';
 import { getMotionStatus } from '../utils/motionStatus';
+import { getTrackingModeLabel } from '../utils/bleDistance';
 
 export default function CoverageCard({
   distanceM,
@@ -17,6 +18,7 @@ export default function CoverageCard({
 }) {
   const status = getProximityStatus(distanceM ?? Infinity, radiusM);
   const motionStatus = getMotionStatus(speedKmh);
+  const modeInfo = getTrackingModeLabel(distanceSource ?? 'destination');
   const hintSentence =
     inCoverage && visitorPosition && destination
       ? formatArrivalSentence(distanceM, visitorPosition, destination, 'visitor')
@@ -42,7 +44,7 @@ export default function CoverageCard({
           <p className="mt-2 text-sm text-white/50">
             Inside coverage zone
             {accuracyM != null ? ` · ±${accuracyM} m` : ''}
-            {distanceSource === 'devices' ? ' · live GPS pair' : ''}
+            {` · ${modeInfo.short}`}
           </p>
         </div>
       ) : (

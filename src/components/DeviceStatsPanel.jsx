@@ -2,6 +2,7 @@ import { motion } from 'framer-motion';
 import GlassCard from './GlassCard';
 import { getMotionStatus } from '../utils/motionStatus';
 import { formatRelativeTime } from '../utils/helpers';
+import { getTrackingModeLabel, getPresenceLabel } from '../utils/bleDistance';
 
 export default function DeviceStatsPanel({
   position,
@@ -9,14 +10,28 @@ export default function DeviceStatsPanel({
   lastUpdate,
   battery,
   network,
+  presence = 'online',
+  trackingMode = 'destination',
+  bleRssi,
   title = 'Device info',
 }) {
   const speedKmh = typeof speed === 'number' && Number.isFinite(speed) ? speed : null;
   const motionStatus = getMotionStatus(speedKmh);
+  const mode = getTrackingModeLabel(trackingMode);
+  const presenceInfo = getPresenceLabel(presence);
 
   const items = [
     {
-      label: 'Status',
+      label: 'Connection',
+      value: `${presenceInfo.emoji} ${presenceInfo.label}`,
+      span: 2,
+    },
+    {
+      label: 'Tracking',
+      value: `${mode.emoji} ${mode.short}`,
+    },
+    {
+      label: 'Activity',
       value: `${motionStatus.emoji} ${motionStatus.label}`,
     },
     {
@@ -24,12 +39,8 @@ export default function DeviceStatsPanel({
       value: speedKmh != null ? `${speedKmh.toFixed(1)} km/h` : '—',
     },
     {
-      label: 'Accuracy',
+      label: 'GPS accuracy',
       value: position?.accuracy != null ? `±${Math.round(position.accuracy)} m` : '—',
-    },
-    {
-      label: 'Altitude',
-      value: position?.altitude != null ? `${Math.round(position.altitude)} m` : '—',
     },
     {
       label: 'Battery',
@@ -40,7 +51,11 @@ export default function DeviceStatsPanel({
       value: network ?? '—',
     },
     {
-      label: 'Updated',
+      label: 'Bluetooth RSSI',
+      value: bleRssi != null ? `${bleRssi} dBm` : '—',
+    },
+    {
+      label: 'Last update',
       value: lastUpdate ? formatRelativeTime(lastUpdate) : '—',
       span: 2,
     },
