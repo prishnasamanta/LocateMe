@@ -1,0 +1,3 @@
+﻿[22:45:33] LocateMe -> GitHub push
+[22:45:33] Project: C:\Users\Prishna Samanta\Projects\LocateMe
+[22:45:33] Branch:  feature/locateme-app
