@@ -75,7 +75,7 @@ export default function OwnerLiveTracker({ destination, visitorPos, ownerPositio
     }
   };
 
-  if (!visitorPos) {
+  if (!visitorPos?.lat || visitorPos?.lng == null) {
     return (
       <GlassCard className="text-center">
         <div className="mx-auto h-10 w-10 animate-pulse rounded-full border-2 border-indigo-400/50 border-t-indigo-400" />
@@ -84,6 +84,9 @@ export default function OwnerLiveTracker({ destination, visitorPos, ownerPositio
       </GlassCard>
     );
   }
+
+  const mapVisitorPos =
+    visitorPos.lat != null && visitorPos.lng != null ? visitorPos : null;
 
   return (
     <GlassCard glow>
@@ -144,7 +147,7 @@ export default function OwnerLiveTracker({ destination, visitorPos, ownerPositio
         <div className="mt-4">
           <LiveMap
             destination={{ lat: destination.lat, lng: destination.lng }}
-            userPosition={visitorPos}
+            userPosition={mapVisitorPos}
             radiusMeters={destination.radius ?? 500}
             interactive={false}
             height="240px"

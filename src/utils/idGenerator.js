@@ -8,6 +8,11 @@ export function generateShortId(length = 6) {
   return id;
 }
 
+export function normalizeShareId(id) {
+  if (!id || typeof id !== 'string') return id;
+  return id.toUpperCase();
+}
+
 export function getShareUrl(id, encodedPayload) {
   const base = import.meta.env.VITE_APP_URL || window.location.origin;
   if (encodedPayload) {

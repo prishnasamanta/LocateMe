@@ -27,12 +27,14 @@ import {
   resetPublishThrottle,
 } from '../services/visitorTracking';
 import { getVisitorDisplayName, setVisitorDisplayName } from '../utils/deviceId';
+import { normalizeShareId } from '../utils/idGenerator';
 
 export default function Visitor() {
-  const { id } = useParams();
+  const { id: rawId } = useParams();
+  const id = normalizeShareId(rawId);
   const [searchParams] = useSearchParams();
   const routeLocation = useLocation();
-  const encodedPayload = searchParams.get('d');
+  const encodedPayload = searchParams.get('d')?.trim() || null;
   const [destination, setDestination] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -178,12 +180,6 @@ export default function Visitor() {
   useEffect(() => {
     if (tracking) resetPublishThrottle();
   }, [tracking]);
-
-  useEffect(() => {
-    if (inCoverage && !gateConfirmed && !showGatePrompt && tracking && position) {
-      setShowGatePrompt(true);
-    }
-  }, [inCoverage, gateConfirmed, showGatePrompt, tracking, position]);
 
   if (loading) {
     return (

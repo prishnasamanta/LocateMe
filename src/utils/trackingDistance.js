@@ -11,13 +11,14 @@ export function computeTrackingDistance(
   destination,
   { ownerPosition, radiusM = 500, bleDistanceM = null, gpsDistanceM = null } = {}
 ) {
-  if (!visitor?.lat || !destination?.lat) {
-    return { distanceM: null, source: 'none', accuracyM: null, inCoverage: false };
+  if (visitor?.lat == null || visitor?.lng == null || destination?.lat == null) {
+    return { distanceM: null, source: 'none', accuracyM: null, inCoverage: false, pinDistM: null };
   }
 
   const pinDistM =
     haversineDistance(visitor.lat, visitor.lng, destination.lat, destination.lng) * 1000;
   const visitorAcc = visitor.accuracy ?? null;
+  const inCoverage = pinDistM <= radiusM;
 
   let deviceDistM = null;
   let ownerAcc = null;
@@ -28,7 +29,6 @@ export function computeTrackingDistance(
   }
 
   const referenceGpsM = deviceDistM ?? pinDistM;
-  const inCoverage = pinDistM <= radiusM;
 
   if (
     bleDistanceM != null &&
@@ -39,7 +39,8 @@ export function computeTrackingDistance(
       distanceM: Math.round(bleDistanceM),
       source: 'ble',
       accuracyM: 2,
-      inCoverage: bleDistanceM <= radiusM || inCoverage,
+      inCoverage,
+      pinDistM: Math.round(pinDistM),
     };
   }
 
@@ -52,7 +53,8 @@ export function computeTrackingDistance(
       distanceM: Math.round(deviceDistM),
       source: 'nearby-gps',
       accuracyM,
-      inCoverage: deviceDistM <= radiusM || inCoverage,
+      inCoverage,
+      pinDistM: Math.round(pinDistM),
     };
   }
 
@@ -68,7 +70,8 @@ export function computeTrackingDistance(
       distanceM: Math.round(deviceDistM),
       source: 'devices',
       accuracyM,
-      inCoverage: deviceDistM <= radiusM || inCoverage,
+      inCoverage,
+      pinDistM: Math.round(pinDistM),
     };
   }
 
@@ -77,6 +80,7 @@ export function computeTrackingDistance(
     source: 'destination',
     accuracyM: visitorAcc != null ? Math.round(visitorAcc) : null,
     inCoverage,
+    pinDistM: Math.round(pinDistM),
   };
 }
 

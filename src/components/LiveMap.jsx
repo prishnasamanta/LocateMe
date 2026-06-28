@@ -32,20 +32,25 @@ const userIcon = L.divIcon({
 function MapUpdater({ destination, userPosition }) {
   const map = useMap();
   const initialized = useRef(false);
+  const hasUserCoords =
+    userPosition?.lat != null &&
+    userPosition?.lng != null &&
+    Number.isFinite(userPosition.lat) &&
+    Number.isFinite(userPosition.lng);
 
   useEffect(() => {
-    if (!destination) return;
+    if (!destination?.lat) return;
     const points = [[destination.lat, destination.lng]];
-    if (userPosition) points.push([userPosition.lat, userPosition.lng]);
+    if (hasUserCoords) points.push([userPosition.lat, userPosition.lng]);
 
     if (points.length === 1) {
       map.setView(points[0], 15);
-    } else if (!initialized.current || userPosition) {
+    } else if (!initialized.current || hasUserCoords) {
       const bounds = L.latLngBounds(points);
       map.fitBounds(bounds, { padding: [60, 60], maxZoom: 16 });
       initialized.current = true;
     }
-  }, [destination, userPosition, map]);
+  }, [destination, userPosition, hasUserCoords, map]);
 
   return null;
 }
@@ -59,11 +64,17 @@ export default function LiveMap({
   onMapClick,
   height = '320px',
 }) {
-  const center = destination
+  const center = destination?.lat
     ? [destination.lat, destination.lng]
-    : userPosition
+    : userPosition?.lat != null
       ? [userPosition.lat, userPosition.lng]
       : [22.5726, 88.3639];
+
+  const hasUserCoords =
+    userPosition?.lat != null &&
+    userPosition?.lng != null &&
+    Number.isFinite(userPosition.lat) &&
+    Number.isFinite(userPosition.lng);
 
   const handleClick = (e) => {
     if (onMapClick && interactive) {
@@ -105,7 +116,7 @@ export default function LiveMap({
           </>
         )}
 
-        {userPosition && (
+        {hasUserCoords && (
           <Marker position={[userPosition.lat, userPosition.lng]} icon={userIcon} />
         )}
 

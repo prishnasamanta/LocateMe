@@ -7,7 +7,7 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from '../firebase/config';
-import { generateShortId } from '../utils/idGenerator';
+import { generateShortId, normalizeShareId } from '../utils/idGenerator';
 import { encodeLocationPayload, decodeLocationPayload } from '../utils/locationPayload';
 
 const LOCAL_KEY = 'locateme_locations';
@@ -59,8 +59,9 @@ function normalizeLocation(data, id) {
 
 async function fetchShareCodePayload(id) {
   if (!isFirebaseConfigured || !db) return null;
+  const normalizedId = normalizeShareId(id);
   try {
-    const snap = await getDoc(doc(db, 'shareCodes', id));
+    const snap = await getDoc(doc(db, 'shareCodes', normalizedId));
     if (!snap.exists()) return null;
     return snap.data()?.d ?? null;
   } catch {
@@ -69,17 +70,19 @@ async function fetchShareCodePayload(id) {
 }
 
 export async function getLocation(id, encodedPayload) {
-  let payload = encodedPayload;
+  if (!id) return null;
+  const normalizedId = normalizeShareId(id);
+  let payload = encodedPayload?.trim() || null;
   if (!payload) {
-    payload = await fetchShareCodePayload(id);
+    payload = await fetchShareCodePayload(normalizedId);
   }
 
-  const fromEmbedded = decodeLocationPayload(payload, id);
+  const fromEmbedded = decodeLocationPayload(payload, normalizedId);
   if (fromEmbedded && !isExpired(fromEmbedded)) return fromEmbedded;
 
   if (isFirebaseConfigured && db) {
     try {
-      const snap = await getDoc(doc(db, 'locations', id));
+      const snap = await getDoc(doc(db, 'locations', normalizedId));
       if (!snap.exists()) return fromEmbedded && !isExpired(fromEmbedded) ? fromEmbedded : null;
       const data = snap.data();
       const expires = data.expires?.toDate?.()?.toISOString?.() ?? data.expires ?? null;
@@ -89,7 +92,7 @@ export async function getLocation(id, encodedPayload) {
           expires,
           createdAt: data.createdAt?.toDate?.()?.toISOString?.() ?? data.createdAt,
         },
-        id
+        normalizedId
       );
       return isExpired(location) ? null : location;
     } catch {
@@ -98,17 +101,18 @@ export async function getLocation(id, encodedPayload) {
   }
 
   const store = readLocalStore();
-  const data = store[id];
+  const data = store[normalizedId] ?? store[id];
   if (!data) return fromEmbedded && !isExpired(fromEmbedded) ? fromEmbedded : null;
-  const location = normalizeLocation(data, id);
+  const location = normalizeLocation(data, normalizedId);
   return isExpired(location) ? null : location;
 }
 
 export async function resolveShareInput(parsed) {
   if (!parsed?.id) return null;
-  let payload = parsed.encodedPayload;
-  if (!payload) payload = await fetchShareCodePayload(parsed.id);
-  const location = await getLocation(parsed.id, payload);
+  const normalizedId = normalizeShareId(parsed.id);
+  let payload = parsed.encodedPayload?.trim() || null;
+  if (!payload) payload = await fetchShareCodePayload(normalizedId);
+  const location = await getLocation(normalizedId, payload);
   if (!location) return null;
   return { location, encodedPayload: payload };
 }

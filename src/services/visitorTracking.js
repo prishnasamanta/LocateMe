@@ -2,6 +2,7 @@ import { doc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from '../firebase/config';
 import { haversineDistance } from '../utils/haversine';
 import { getMotionStatus } from '../utils/motionStatus';
+import { normalizeShareId } from '../utils/idGenerator';
 
 const LOCAL_TRACK_KEY = 'locateme_visitor_track';
 const TRACK_EVENT = 'locateme-visitor-track';
@@ -33,7 +34,7 @@ function normalizeTrack(data) {
     ? Date.now() - new Date(heartbeatAt).getTime() > HEARTBEAT_STALE_MS
     : true;
   const presence = data.presence ?? (stale ? 'offline' : 'online');
-  const online = presence === 'online' && !stale && data.lat != null;
+  const online = presence !== 'offline' && !stale && data.lat != null;
 
   const speedKmh =
     typeof data.speed === 'number' && Number.isFinite(data.speed) ? data.speed : null;
@@ -99,9 +100,10 @@ export function shouldPublishPosition(
 }
 
 async function writeLiveStatus(locationId, payload) {
+  const id = normalizeShareId(locationId);
   if (isFirebaseConfigured && db) {
     await setDoc(
-      doc(db, 'locations', locationId, 'status', 'live'),
+      doc(db, 'locations', id, 'status', 'live'),
       { ...payload, heartbeatAt: serverTimestamp(), updatedAt: serverTimestamp() },
       { merge: true }
     );
@@ -109,9 +111,9 @@ async function writeLiveStatus(locationId, payload) {
   }
 
   const store = readLocalTrack();
-  store[locationId] = payload;
+  store[id] = payload;
   writeLocalTrack(store);
-  window.dispatchEvent(new CustomEvent(TRACK_EVENT, { detail: { locationId, ...payload } }));
+  window.dispatchEvent(new CustomEvent(TRACK_EVENT, { detail: { locationId: id, ...payload } }));
 }
 
 export async function setVisitorPresence(locationId, presence, meta = {}) {
@@ -175,11 +177,12 @@ export async function publishVisitorPosition(locationId, position, meta = {}) {
 }
 
 export function subscribeVisitorPosition(locationId, callback) {
-  if (!locationId) return () => {};
+  const id = normalizeShareId(locationId);
+  if (!id) return () => {};
 
   if (isFirebaseConfigured && db) {
     return onSnapshot(
-      doc(db, 'locations', locationId, 'status', 'live'),
+      doc(db, 'locations', id, 'status', 'live'),
       (snap) => {
         if (!snap.exists()) {
           callback(null);
@@ -200,11 +203,11 @@ export function subscribeVisitorPosition(locationId, callback) {
 
   const read = () => {
     const store = readLocalTrack();
-    callback(normalizeTrack(store[locationId]));
+    callback(normalizeTrack(store[id]));
   };
 
   const onCustom = (e) => {
-    if (e.detail?.locationId === locationId) read();
+    if (e.detail?.locationId === id) read();
   };
 
   window.addEventListener(TRACK_EVENT, onCustom);
@@ -227,7 +230,9 @@ export function resetPublishThrottle() {
 }
 
 export function isVisitorOnline(visitor) {
-  return visitor?.presence === 'online' && visitor?.online !== false;
+  if (!visitor?.lat || visitor?.lng == null) return false;
+  if (visitor.presence === 'offline') return false;
+  return visitor.online !== false;
 }
 
 export function getVisitorPresence(visitor) {
@@ -235,7 +240,8 @@ export function getVisitorPresence(visitor) {
 }
 
 export async function publishOwnerPosition(locationId, position, meta = {}) {
-  if (!locationId || !position?.lat) return;
+  const id = normalizeShareId(locationId);
+  if (!id || position?.lat == null) return;
   const now = new Date().toISOString();
   const payload = {
     lat: position.lat,
@@ -251,7 +257,7 @@ export async function publishOwnerPosition(locationId, position, meta = {}) {
 
   if (isFirebaseConfigured && db) {
     await setDoc(
-      doc(db, 'locations', locationId, 'status', 'owner'),
+      doc(db, 'locations', id, 'status', 'owner'),
       { ...payload, heartbeatAt: serverTimestamp(), updatedAt: serverTimestamp() },
       { merge: true }
     );
@@ -259,15 +265,16 @@ export async function publishOwnerPosition(locationId, position, meta = {}) {
   }
 
   const store = readLocalTrack();
-  store[`owner:${locationId}`] = payload;
+  store[`owner:${id}`] = payload;
   writeLocalTrack(store);
   window.dispatchEvent(
-    new CustomEvent(TRACK_EVENT, { detail: { locationId, owner: true, ...payload } })
+    new CustomEvent(TRACK_EVENT, { detail: { locationId: id, owner: true, ...payload } })
   );
 }
 
 export async function setOwnerPresence(locationId, presence, meta = {}) {
-  if (!locationId) return;
+  const id = normalizeShareId(locationId);
+  if (!id) return;
   const now = new Date().toISOString();
   const payload = {
     presence,
@@ -279,7 +286,7 @@ export async function setOwnerPresence(locationId, presence, meta = {}) {
 
   if (isFirebaseConfigured && db) {
     await setDoc(
-      doc(db, 'locations', locationId, 'status', 'owner'),
+      doc(db, 'locations', id, 'status', 'owner'),
       { ...payload, heartbeatAt: serverTimestamp(), updatedAt: serverTimestamp() },
       { merge: true }
     );
@@ -287,17 +294,18 @@ export async function setOwnerPresence(locationId, presence, meta = {}) {
   }
 
   const store = readLocalTrack();
-  const prev = store[`owner:${locationId}`] ?? {};
-  store[`owner:${locationId}`] = { ...prev, ...payload };
+  const prev = store[`owner:${id}`] ?? {};
+  store[`owner:${id}`] = { ...prev, ...payload };
   writeLocalTrack(store);
 }
 
 export function subscribeOwnerPosition(locationId, callback) {
-  if (!locationId) return () => {};
+  const id = normalizeShareId(locationId);
+  if (!id) return () => {};
 
   if (isFirebaseConfigured && db) {
     return onSnapshot(
-      doc(db, 'locations', locationId, 'status', 'owner'),
+      doc(db, 'locations', id, 'status', 'owner'),
       (snap) => {
         if (!snap.exists()) {
           callback(null);
@@ -324,7 +332,7 @@ export function subscribeOwnerPosition(locationId, callback) {
 
   const read = () => {
     const store = readLocalTrack();
-    const data = store[`owner:${locationId}`];
+    const data = store[`owner:${id}`];
     if (!data) {
       callback(null);
       return;
@@ -341,7 +349,7 @@ export function subscribeOwnerPosition(locationId, callback) {
   };
 
   const onCustom = (e) => {
-    if (e.detail?.locationId === locationId && e.detail?.owner) read();
+    if (e.detail?.locationId === id && e.detail?.owner) read();
   };
 
   window.addEventListener(TRACK_EVENT, onCustom);

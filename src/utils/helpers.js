@@ -18,7 +18,10 @@ export function computeProgress(initialDistanceM, currentDistanceM) {
 }
 
 export function formatRelativeTime(date) {
-  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (!date) return '—';
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return '—';
+  const seconds = Math.floor((Date.now() - d.getTime()) / 1000);
   if (seconds < 5) return 'Just now';
   if (seconds < 60) return `${seconds}s ago`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
