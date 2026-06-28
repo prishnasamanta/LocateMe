@@ -1,7 +1,8 @@
 import { motion as Motion } from 'framer-motion';
 import GlassCard from './GlassCard';
 import { getProximityStatus } from '../utils/helpers';
-import { formatLiveDistance, getVerticalHint } from '../utils/relativePosition';
+import { formatLiveDistance } from '../utils/relativePosition';
+import { formatArrivalSentence } from '../utils/arrivalHint';
 import { getMotionStatus } from '../utils/motionStatus';
 
 export default function CoverageCard({
@@ -11,12 +12,14 @@ export default function CoverageCard({
   visitorPosition,
   destination,
   speedKmh,
+  accuracyM,
+  distanceSource,
 }) {
   const status = getProximityStatus(distanceM ?? Infinity, radiusM);
   const motionStatus = getMotionStatus(speedKmh);
-  const vertical =
+  const hintSentence =
     inCoverage && visitorPosition && destination
-      ? getVerticalHint(visitorPosition, destination, 'visitor')
+      ? formatArrivalSentence(distanceM, visitorPosition, destination, 'visitor')
       : null;
 
   return (
@@ -33,12 +36,14 @@ export default function CoverageCard({
           >
             {formatLiveDistance(distanceM)}
           </Motion.p>
-          {vertical && (
-            <p className="mt-3 text-lg font-semibold text-indigo-300">
-              {vertical.icon} {vertical.text}
-            </p>
+          {hintSentence && (
+            <p className="mt-3 text-lg font-semibold text-indigo-300">{hintSentence}</p>
           )}
-          <p className="mt-2 text-sm text-white/50">Inside coverage zone</p>
+          <p className="mt-2 text-sm text-white/50">
+            Inside coverage zone
+            {accuracyM != null ? ` · ±${accuracyM} m` : ''}
+            {distanceSource === 'devices' ? ' · live GPS pair' : ''}
+          </p>
         </div>
       ) : (
         <div className="text-center">

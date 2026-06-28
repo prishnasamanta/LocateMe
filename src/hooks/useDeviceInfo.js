@@ -42,22 +42,48 @@ export function useDeviceInfo() {
   const [network, setNetwork] = useState(null);
 
   useEffect(() => {
-    if (navigator.getBattery) {
-      navigator.getBattery().then((bat) => {
-        const update = () => setBattery(Math.round(bat.level * 100));
-        update();
-        bat.addEventListener('levelchange', update);
-      });
-    }
+    let batteryApi = null;
+    let batteryHandler = null;
+    let conn = null;
+    let connHandler = null;
+    let pollId = null;
 
-    const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    const readBattery = async () => {
+      try {
+        if (navigator.getBattery) {
+          batteryApi = await navigator.getBattery();
+          batteryHandler = () => setBattery(Math.round(batteryApi.level * 100));
+          batteryHandler();
+          batteryApi.addEventListener('levelchange', batteryHandler);
+          return;
+        }
+      } catch {
+        /* unsupported */
+      }
+      setBattery(null);
+    };
+
+    conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
     if (conn) {
-      const update = () => {
+      connHandler = () => {
         setNetwork(conn.effectiveType?.toUpperCase() ?? conn.type ?? 'Unknown');
       };
-      update();
-      conn.addEventListener('change', update);
+      connHandler();
+      conn.addEventListener('change', connHandler);
     }
+
+    readBattery();
+    pollId = window.setInterval(readBattery, 15000);
+
+    return () => {
+      if (pollId) clearInterval(pollId);
+      if (batteryApi && batteryHandler) {
+        batteryApi.removeEventListener('levelchange', batteryHandler);
+      }
+      if (conn && connHandler) {
+        conn.removeEventListener('change', connHandler);
+      }
+    };
   }, []);
 
   return { battery, network };

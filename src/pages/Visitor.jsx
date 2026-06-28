@@ -2,34 +2,47 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useSearchParams, useLocation, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { getLocation } from '../services/locations';
-import { haversineDistance } from '../utils/haversine';
 import { computeProgress } from '../utils/helpers';
+import {
+  computeTrackingDistance,
+  smoothPosition,
+  normalizeSpeedKmh,
+} from '../utils/trackingDistance';
 import { useGeolocation } from '../hooks/useGeolocation';
 import { useDeviceInfo } from '../hooks/useDeviceInfo';
+import { useVisitorRing } from '../hooks/useVisitorRing';
 import GlassCard from '../components/GlassCard';
 import CoverageCard from '../components/CoverageCard';
 import ProgressBar from '../components/ProgressBar';
-import VisitorDeviceStats from '../components/VisitorDeviceStats';
+import DeviceStatsPanel from '../components/DeviceStatsPanel';
 import ArrivalInstructions from '../components/ArrivalInstructions';
-import { publishVisitorPosition, resetPublishThrottle } from '../services/visitorTracking';
+import GatePrompt from '../components/GatePrompt';
+import {
+  publishVisitorPosition,
+  subscribeOwnerPosition,
+  resetPublishThrottle,
+} from '../services/visitorTracking';
 import { getVisitorDisplayName, setVisitorDisplayName } from '../utils/deviceId';
 
 export default function Visitor() {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
-  const location = useLocation();
+  const routeLocation = useLocation();
   const encodedPayload = searchParams.get('d');
   const [destination, setDestination] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [loadError, setLoadError] = useState(null);
-  const [tracking, setTracking] = useState(Boolean(location.state?.autoTrack));
-  const [distanceKm, setDistanceKm] = useState(null);
+  const [tracking, setTracking] = useState(Boolean(routeLocation.state?.autoTrack));
+  const [ownerPosition, setOwnerPosition] = useState(null);
+  const [gateConfirmed, setGateConfirmed] = useState(false);
+  const [showGatePrompt, setShowGatePrompt] = useState(false);
   const [visitorName, setVisitorNameState] = useState(getVisitorDisplayName());
   const initialDistanceRef = useRef(null);
+  const smoothedRef = useRef(null);
 
   const {
-    position,
+    position: rawPosition,
     error: geoError,
     loading: geoLoading,
     speed,
@@ -38,6 +51,16 @@ export default function Visitor() {
   } = useGeolocation(tracking);
 
   const { battery, network } = useDeviceInfo();
+  useVisitorRing(id, tracking);
+
+  const speedKmh = normalizeSpeedKmh(rawPosition, speed);
+  const position = rawPosition
+    ? smoothPosition(smoothedRef.current, rawPosition, speedKmh)
+    : null;
+
+  useEffect(() => {
+    smoothedRef.current = position;
+  }, [position]);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,33 +87,50 @@ export default function Visitor() {
   }, [id, encodedPayload]);
 
   useEffect(() => {
-    if (location.state?.autoTrack) {
-      requestPermission();
-    }
-  }, [location.state?.autoTrack, requestPermission]);
+    if (routeLocation.state?.autoTrack) requestPermission();
+  }, [routeLocation.state?.autoTrack, requestPermission]);
 
   useEffect(() => {
-    if (!position || !destination) return;
-    const dist = haversineDistance(position.lat, position.lng, destination.lat, destination.lng);
-    setDistanceKm(dist);
+    if (!id) return;
+    return subscribeOwnerPosition(id, setOwnerPosition);
+  }, [id]);
+
+  const trackingResult =
+    position && destination
+      ? computeTrackingDistance(position, destination, {
+          ownerPosition,
+          radiusM: destination.radius,
+        })
+      : { distanceM: null, inCoverage: false, accuracyM: null, source: 'none' };
+
+  const { distanceM, inCoverage, accuracyM, source: distanceSource } = trackingResult;
+
+  useEffect(() => {
+    if (distanceM == null) return;
     if (initialDistanceRef.current == null) {
-      initialDistanceRef.current = dist * 1000;
+      initialDistanceRef.current = distanceM;
     }
-  }, [position, destination]);
+  }, [distanceM]);
 
   useEffect(() => {
     if (!tracking || !position || !id) return;
     publishVisitorPosition(id, position, {
       displayName: visitorName,
-      speed,
+      speed: speedKmh,
       battery,
       network,
     }).catch(() => {});
-  }, [tracking, position, id, visitorName, speed, battery, network]);
+  }, [tracking, position, id, visitorName, speedKmh, battery, network]);
 
   useEffect(() => {
     if (tracking) resetPublishThrottle();
   }, [tracking]);
+
+  useEffect(() => {
+    if (inCoverage && !gateConfirmed && !showGatePrompt && tracking && position) {
+      setShowGatePrompt(true);
+    }
+  }, [inCoverage, gateConfirmed, showGatePrompt, tracking, position]);
 
   if (loading) {
     return (
@@ -118,18 +158,16 @@ export default function Visitor() {
     );
   }
 
-  const distanceM = distanceKm != null ? distanceKm * 1000 : null;
-  const inCoverage = distanceM != null && distanceM <= destination.radius;
-  const arrived = inCoverage;
   const progress = computeProgress(initialDistanceRef.current, distanceM ?? 0);
 
-  if (tracking && arrived && !geoLoading && position) {
+  if (tracking && inCoverage && gateConfirmed && !geoLoading && position) {
     return (
       <div className="flex min-h-dvh items-center justify-center px-4 py-8">
         <ArrivalInstructions
           locationId={id}
           destination={destination}
           visitorPosition={position}
+          distanceM={distanceM}
         />
       </div>
     );
@@ -137,6 +175,16 @@ export default function Visitor() {
 
   return (
     <div className="page-shell">
+      {showGatePrompt && !gateConfirmed && (
+        <GatePrompt
+          onConfirm={() => {
+            setGateConfirmed(true);
+            setShowGatePrompt(false);
+          }}
+          onDecline={() => setShowGatePrompt(false)}
+        />
+      )}
+
       <div className="page-container max-w-lg">
         <Link to="/" className="nav-back">
           ← LocateMe
@@ -196,29 +244,43 @@ export default function Visitor() {
                   inCoverage={inCoverage}
                   visitorPosition={position}
                   destination={destination}
-                  speedKmh={
-                    typeof speed === 'number' && Number.isFinite(speed) ? speed : null
-                  }
+                  speedKmh={speedKmh}
+                  accuracyM={accuracyM}
+                  distanceSource={distanceSource}
                 />
 
-                {initialDistanceRef.current != null && initialDistanceRef.current > destination.radius && (
-                  <ProgressBar
-                    progress={progress}
-                    initialDistanceM={initialDistanceRef.current}
-                    currentDistanceM={distanceM ?? 0}
-                    showSubtitle={false}
-                  />
-                )}
+                {initialDistanceRef.current != null &&
+                  initialDistanceRef.current > destination.radius && (
+                    <ProgressBar
+                      progress={progress}
+                      initialDistanceM={initialDistanceRef.current}
+                      currentDistanceM={distanceM ?? 0}
+                      showSubtitle={false}
+                    />
+                  )}
 
                 <GlassCard className="text-center">
                   <span className="text-3xl">🔒</span>
                   <p className="mt-3 text-sm font-medium text-white/70">
-                    Hidden steps unlock when you reach the destination.
+                    {inCoverage
+                      ? 'Confirm you entered the gate to unlock directions.'
+                      : 'Hidden steps unlock when you reach the destination.'}
                   </p>
+                  {inCoverage && !gateConfirmed && (
+                    <button
+                      type="button"
+                      onClick={() => setShowGatePrompt(true)}
+                      className="btn-secondary mt-4 w-full"
+                    >
+                      I entered the gate
+                    </button>
+                  )}
                 </GlassCard>
 
-                <VisitorDeviceStats
-                  speed={speed}
+                <DeviceStatsPanel
+                  title="Your device"
+                  position={position}
+                  speed={speedKmh}
                   lastUpdate={lastUpdate}
                   battery={battery}
                   network={network}

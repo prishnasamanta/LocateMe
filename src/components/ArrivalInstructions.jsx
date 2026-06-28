@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import GlassCard from './GlassCard';
-import RelativePositionBadge from './RelativePositionBadge';
 import { notifyVisitorCompleted } from '../services/visitorNotifications';
+import { formatArrivalSentence } from '../utils/arrivalHint';
 
 const STEPS = [
   'Go straight to take the lift',
@@ -10,11 +10,17 @@ const STEPS = [
   'Get out from lift and stay on the right side facing the lift and eyes closed',
 ];
 
-export default function ArrivalInstructions({ locationId, destination, visitorPosition }) {
+export default function ArrivalInstructions({
+  locationId,
+  destination,
+  visitorPosition,
+  distanceM,
+}) {
   const [stepIndex, setStepIndex] = useState(0);
   const [waiting, setWaiting] = useState(false);
   const [notifying, setNotifying] = useState(false);
 
+  const hint = formatArrivalSentence(distanceM, visitorPosition, destination, 'visitor');
   const isLocked = waiting;
   const canGoBack = stepIndex > 0 && !isLocked;
 
@@ -41,16 +47,13 @@ export default function ArrivalInstructions({ locationId, destination, visitorPo
 
   return (
     <div className="relative w-full max-w-md">
-      {visitorPosition && destination && (
-        <RelativePositionBadge
-          visitor={visitorPosition}
-          destination={destination}
-          inRangeOnly
-          className="absolute -top-2 right-0 z-10"
-        />
-      )}
-
       <GlassCard glow className="text-center">
+        {hint && (
+          <p className="mb-4 rounded-xl bg-indigo-500/10 px-4 py-3 text-lg font-semibold text-indigo-200">
+            {hint}
+          </p>
+        )}
+
         <p className="text-xs font-medium uppercase tracking-widest text-white/50">
           Step {waiting ? STEPS.length : stepIndex + 1} of {STEPS.length}
         </p>

@@ -2,27 +2,36 @@ import { useEffect, useState, useRef } from 'react';
 import { motion as Motion } from 'framer-motion';
 import GlassCard from './GlassCard';
 import LiveMap from './LiveMap';
-import { computeRelativePosition, formatLiveDistance, getVerticalHint } from '../utils/relativePosition';
+import DeviceStatsPanel from './DeviceStatsPanel';
+import { computeTrackingDistance } from '../utils/trackingDistance';
+import { formatLiveDistance, getVerticalHint } from '../utils/relativePosition';
+import { formatArrivalSentence } from '../utils/arrivalHint';
 import { getMotionStatus } from '../utils/motionStatus';
 import { formatRelativeTime } from '../utils/helpers';
+import { startVisitorRing, stopVisitorRing, subscribeVisitorRing } from '../services/visitorRing';
 
 function parseUpdatedAt(iso) {
   if (!iso) return null;
   return typeof iso === 'string' ? new Date(iso) : iso;
 }
 
-export default function OwnerLiveTracker({ destination, visitorPos }) {
+export default function OwnerLiveTracker({ destination, visitorPos, ownerPosition, locationId }) {
   const [pulse, setPulse] = useState(false);
+  const [ringing, setRinging] = useState(false);
+  const [ringBusy, setRingBusy] = useState(false);
   const prevDistanceRef = useRef(null);
 
-  const relative =
-    visitorPos && destination?.lat != null
-      ? computeRelativePosition(visitorPos, destination, {
-          radiusM: destination.radius ?? 500,
-        })
-      : { distanceM: null, inRange: false };
+  useEffect(() => {
+    if (!locationId) return;
+    return subscribeVisitorRing(locationId, (state) => setRinging(Boolean(state.active)));
+  }, [locationId]);
 
-  const { distanceM, inRange } = relative;
+  const tracking = computeTrackingDistance(visitorPos, destination, {
+    ownerPosition,
+    radiusM: destination?.radius ?? 500,
+  });
+
+  const { distanceM, inCoverage, source, accuracyM } = tracking;
   const updatedAt = parseUpdatedAt(visitorPos?.updatedAt);
   const speedKmh =
     typeof visitorPos?.speed === 'number' && Number.isFinite(visitorPos.speed)
@@ -32,7 +41,11 @@ export default function OwnerLiveTracker({ destination, visitorPos }) {
     ? visitorPos.motionStatus
     : getMotionStatus(speedKmh);
   const vertical =
-    inRange && visitorPos ? getVerticalHint(visitorPos, destination, 'owner') : null;
+    inCoverage && visitorPos ? getVerticalHint(visitorPos, destination, 'owner') : null;
+  const hintSentence =
+    inCoverage && visitorPos
+      ? formatArrivalSentence(distanceM, visitorPos, destination, 'owner')
+      : null;
 
   useEffect(() => {
     if (distanceM == null) return;
@@ -44,6 +57,17 @@ export default function OwnerLiveTracker({ destination, visitorPos }) {
     }
     prevDistanceRef.current = distanceM;
   }, [distanceM]);
+
+  const toggleRing = async () => {
+    if (!locationId || ringBusy) return;
+    setRingBusy(true);
+    try {
+      if (ringing) await stopVisitorRing(locationId);
+      else await startVisitorRing(locationId);
+    } finally {
+      setRingBusy(false);
+    }
+  };
 
   if (!visitorPos) {
     return (
@@ -62,7 +86,9 @@ export default function OwnerLiveTracker({ destination, visitorPos }) {
           <p className="field-label">Live visitor</p>
           <p className="font-semibold text-white">{visitorPos.displayName || 'Visitor'}</p>
         </div>
-        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${visitorPos.online !== false ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/10 text-white/40'}`}>
+        <span
+          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${visitorPos.online !== false ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/10 text-white/40'}`}
+        >
           {visitorPos.online !== false ? 'online' : 'offline'}
         </span>
       </div>
@@ -72,11 +98,18 @@ export default function OwnerLiveTracker({ destination, visitorPos }) {
         className="mt-4 text-center"
       >
         <p className="font-mono text-5xl font-bold text-white">{formatLiveDistance(distanceM)}</p>
-        {inRange && vertical && (
+        {inCoverage && hintSentence && (
+          <p className="mt-2 text-lg font-semibold text-indigo-300">{hintSentence}</p>
+        )}
+        {!inCoverage && vertical && (
           <p className="mt-2 text-lg font-semibold text-indigo-300">
             {vertical.icon} {vertical.text}
           </p>
         )}
+        <p className="mt-2 text-xs text-white/40">
+          {source === 'devices' ? 'Live device-to-device' : 'To destination pin'}
+          {accuracyM != null ? ` · ±${accuracyM} m` : ''}
+        </p>
       </Motion.div>
 
       <div className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-white/5 px-4 py-2.5">
@@ -86,6 +119,19 @@ export default function OwnerLiveTracker({ destination, visitorPos }) {
           <span className="text-sm text-white/40">· {speedKmh.toFixed(1)} km/h</span>
         )}
       </div>
+
+      <button
+        type="button"
+        onClick={toggleRing}
+        disabled={ringBusy}
+        className={`mt-4 w-full rounded-xl py-3.5 text-sm font-semibold transition ${
+          ringing
+            ? 'bg-red-500/20 text-red-300 ring-1 ring-red-500/40'
+            : 'bg-amber-500/15 text-amber-200 ring-1 ring-amber-500/30 hover:bg-amber-500/25'
+        }`}
+      >
+        {ringBusy ? '…' : ringing ? '🔕 Stop ring on visitor phone' : '🔔 Ring visitor phone'}
+      </button>
 
       {destination?.lat != null && destination?.lng != null && (
         <div className="mt-4">
@@ -99,13 +145,16 @@ export default function OwnerLiveTracker({ destination, visitorPos }) {
         </div>
       )}
 
-      {updatedAt && (
-        <p className="mt-2 text-center text-xs text-white/40">
-          Updated {formatRelativeTime(updatedAt)}
-          {visitorPos.battery != null ? ` · 🔋 ${visitorPos.battery}%` : ''}
-          {visitorPos.network ? ` · ${visitorPos.network}` : ''}
-        </p>
-      )}
+      <div className="mt-4">
+        <DeviceStatsPanel
+          title="Visitor device"
+          position={visitorPos}
+          speed={speedKmh}
+          lastUpdate={updatedAt}
+          battery={visitorPos.battery}
+          network={visitorPos.network}
+        />
+      </div>
     </GlassCard>
   );
 }

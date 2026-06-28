@@ -52,7 +52,6 @@ export default function QrUploader({ onScan, label = 'Upload QR image' }) {
         ref={inputRef}
         type="file"
         accept="image/*"
-        capture="environment"
         className="hidden"
         onChange={handleFile}
       />
@@ -62,7 +61,7 @@ export default function QrUploader({ onScan, label = 'Upload QR image' }) {
         disabled={busy}
         className="btn-secondary w-full"
       >
-        {busy ? 'Scanning…' : `📷 ${label}`}
+        {busy ? 'Reading image…' : `🖼️ ${label}`}
       </button>
       {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
     </div>

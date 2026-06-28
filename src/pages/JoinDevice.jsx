@@ -16,10 +16,25 @@ import {
 import { resolveShareInput } from '../services/locations';
 import { parseShareInput, buildVisitorPath } from '../utils/shareLink';
 
+function ConnectOptions({ onGoogle, showGoogle }) {
+  return (
+    <div className="mt-4 space-y-2">
+      {showGoogle && (
+        <button type="button" onClick={onGoogle} className="btn-secondary w-full">
+          🔐 Connect with Google account
+        </button>
+      )}
+      <p className="text-center text-xs text-white/40">
+        Or open the owner&apos;s full link in your browser — no sign-in needed.
+      </p>
+    </div>
+  );
+}
+
 export default function JoinDevice() {
   const navigate = useNavigate();
   const { user, loading: authLoading, signInWithGoogle } = useAuth();
-  const [mode, setMode] = useState('code');
+  const [mode, setMode] = useState('join');
   const [authBusy, setAuthBusy] = useState(false);
   const [tracking, setTracking] = useState(false);
   const [deviceLabel, setDeviceLabelState] = useState(getDeviceLabel());
@@ -28,8 +43,7 @@ export default function JoinDevice() {
   const [pairing, setPairing] = useState(false);
 
   const deviceId = getDeviceId();
-  const { position, error: geoError, loading: geoLoading, requestPermission } =
-    useGeolocation(tracking);
+  const { position, error: geoError, requestPermission } = useGeolocation(tracking);
 
   useEffect(() => {
     if (!tracking || !position || !user?.uid) return;
@@ -46,7 +60,7 @@ export default function JoinDevice() {
     try {
       const parsed = parseShareInput(raw);
       if (!parsed?.id) {
-        throw new Error('Invalid code or link. Use the 6-character code, full link, or QR.');
+        throw new Error('Invalid code or link. Use the 6-character code, full link, or QR image.');
       }
 
       const result = await resolveShareInput(parsed);
@@ -77,7 +91,7 @@ export default function JoinDevice() {
     );
   }
 
-  if (mode === 'code') {
+  if (mode === 'join') {
     return (
       <div className="page-shell">
         <div className="page-container max-w-md">
@@ -86,10 +100,10 @@ export default function JoinDevice() {
           </Link>
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
             <GlassCard glow className="mt-4 text-center">
-              <span className="hero-icon">🔗</span>
-              <h1 className="page-title mt-4">Join destination</h1>
+              <span className="hero-icon">📱</span>
+              <h1 className="page-title mt-4">Connect second device</h1>
               <p className="page-subtitle mt-2">
-                Enter the owner&apos;s 6-character code, paste the link, or upload their QR.
+                Enter the code, paste the link, upload a QR image, or use your Google account.
               </p>
             </GlassCard>
 
@@ -99,16 +113,16 @@ export default function JoinDevice() {
                 <input
                   type="text"
                   value={codeInput}
-                  onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
-                  placeholder="e.g. 9QWKNB or full link"
-                  className="field-input font-mono uppercase tracking-widest"
+                  onChange={(e) => setCodeInput(e.target.value)}
+                  placeholder="6-char code or https://…/l/…"
+                  className="field-input font-mono"
                 />
                 <button
                   type="submit"
                   disabled={pairing || !codeInput.trim()}
                   className="btn-primary mt-3 w-full"
                 >
-                  {pairing ? 'Loading…' : 'Connect →'}
+                  {pairing ? 'Loading…' : 'Connect with code / link →'}
                 </button>
               </form>
 
@@ -118,20 +132,18 @@ export default function JoinDevice() {
                 <div className="h-px flex-1 bg-white/10" />
               </div>
 
-              <QrUploader label="Upload QR screenshot" onScan={(data) => pairDestination(data)} />
+              <QrUploader
+                label="Upload QR image (screenshot or photo)"
+                onScan={(data) => pairDestination(data)}
+              />
 
               {pairError && <div className="alert-error mt-4 text-sm">{pairError}</div>}
-            </GlassCard>
 
-            {isFirebaseConfigured && (
-              <button
-                type="button"
-                onClick={() => setMode('google')}
-                className="btn-secondary mt-4 w-full"
-              >
-                Register this phone on Google hub instead
-              </button>
-            )}
+              <ConnectOptions
+                showGoogle={isFirebaseConfigured}
+                onGoogle={() => setMode('google')}
+              />
+            </GlassCard>
           </motion.div>
         </div>
       </div>
@@ -142,14 +154,14 @@ export default function JoinDevice() {
     return (
       <div className="page-shell">
         <div className="page-container max-w-md">
-          <button type="button" onClick={() => setMode('code')} className="nav-back">
+          <button type="button" onClick={() => setMode('join')} className="nav-back">
             ← Back
           </button>
           <GlassCard glow className="mt-6 text-center">
-            <span className="hero-icon">📱</span>
-            <h1 className="page-title mt-4">Connect this device</h1>
+            <span className="hero-icon">🔐</span>
+            <h1 className="page-title mt-4">Google account</h1>
             <p className="page-subtitle mt-2">
-              Sign in with Google so the owner hub remembers this phone.
+              Same Gmail as the owner — your phone appears on their device hub with live GPS.
             </p>
             <div className="mt-6">
               <GoogleSignInButton
@@ -178,7 +190,7 @@ export default function JoinDevice() {
     return (
       <div className="page-shell">
         <div className="page-container max-w-md">
-          <button type="button" onClick={() => setMode('code')} className="nav-back">
+          <button type="button" onClick={() => setMode('join')} className="nav-back">
             ← Back
           </button>
           <GlassCard className="mt-4">
@@ -221,14 +233,14 @@ export default function JoinDevice() {
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <GlassCard glow className="mt-4 text-center">
             <span className="text-3xl">✅</span>
-            <p className="mt-2 font-semibold text-emerald-400">Device connected</p>
+            <p className="mt-2 font-semibold text-emerald-400">Google device connected</p>
             <p className="text-sm text-white/50">{user?.email}</p>
           </GlassCard>
 
           <GlassCard className="mt-4">
-            <h2 className="text-lg font-bold text-white">Enter destination</h2>
+            <h2 className="text-lg font-bold text-white">Go to a destination</h2>
             <p className="mt-1 text-sm text-white/50">
-              Paste the link, enter the 6-character code, or upload the owner&apos;s QR.
+              Optional: enter code, paste link, or upload QR image.
             </p>
 
             <form onSubmit={handleCodeSubmit} className="mt-4">
@@ -236,9 +248,9 @@ export default function JoinDevice() {
               <input
                 type="text"
                 value={codeInput}
-                onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
-                placeholder="e.g. PQZ3NS or full link"
-                className="field-input font-mono uppercase tracking-widest"
+                onChange={(e) => setCodeInput(e.target.value)}
+                placeholder="Code, link, or skip if hub-only"
+                className="field-input font-mono"
               />
               <button type="submit" disabled={pairing || !codeInput.trim()} className="btn-primary mt-3 w-full">
                 {pairing ? 'Loading…' : 'Go to destination →'}
@@ -251,16 +263,13 @@ export default function JoinDevice() {
               <div className="h-px flex-1 bg-white/10" />
             </div>
 
-            <QrUploader label="Upload QR screenshot" onScan={(data) => pairDestination(data, { locationGranted: true })} />
+            <QrUploader
+              label="Upload QR image"
+              onScan={(data) => pairDestination(data, { locationGranted: true })}
+            />
 
             {pairError && <div className="alert-error mt-4 text-sm">{pairError}</div>}
           </GlassCard>
-
-          {geoLoading && !position && (
-            <GlassCard className="mt-4 text-center">
-              <div className="spinner mx-auto" />
-            </GlassCard>
-          )}
         </motion.div>
       </div>
     </div>

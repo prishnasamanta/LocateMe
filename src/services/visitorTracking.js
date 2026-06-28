@@ -46,27 +46,37 @@ function normalizeTrack(data) {
   };
 }
 
-const lastPublishRef = { time: 0, lat: null, lng: null };
+const lastPublishRef = { time: 0, lat: null, lng: null, metaKey: null };
 
-export function shouldPublishPosition(position, { minIntervalMs = 800, minMoveM = 1 } = {}) {
+export function shouldPublishPosition(
+  position,
+  meta = {},
+  { minIntervalMs = 800, minMoveM = 1, metaIntervalMs = 4000 } = {}
+) {
   if (!position) return false;
   const now = Date.now();
+  const metaKey = `${meta.battery ?? ''}|${meta.network ?? ''}|${meta.displayName ?? ''}`;
   if (lastPublishRef.lat == null) return true;
   const movedM =
     haversineDistance(lastPublishRef.lat, lastPublishRef.lng, position.lat, position.lng) * 1000;
   if (movedM >= minMoveM) return true;
+  if (metaKey !== lastPublishRef.metaKey) return true;
+  if (now - lastPublishRef.time >= metaIntervalMs) return true;
   return now - lastPublishRef.time >= minIntervalMs;
 }
 
 export async function publishVisitorPosition(locationId, position, meta = {}) {
   if (!locationId || !position) return;
-  if (!shouldPublishPosition(position)) return;
+  if (!shouldPublishPosition(position, meta)) return;
 
   lastPublishRef.time = Date.now();
   lastPublishRef.lat = position.lat;
   lastPublishRef.lng = position.lng;
+  lastPublishRef.metaKey = `${meta.battery ?? ''}|${meta.network ?? ''}|${meta.displayName ?? ''}`;
 
-  const speedKmh = meta.speed ?? position.speed ?? null;
+  const rawSpeed = meta.speed ?? (position.speed != null ? position.speed * 3.6 : null);
+  const speedKmh =
+    typeof rawSpeed === 'number' && Number.isFinite(rawSpeed) ? rawSpeed : null;
   const motion = getMotionStatus(speedKmh);
 
   const payload = {
@@ -146,10 +156,83 @@ export function resetPublishThrottle() {
   lastPublishRef.time = 0;
   lastPublishRef.lat = null;
   lastPublishRef.lng = null;
+  lastPublishRef.metaKey = null;
 }
 
 export function isVisitorOnline(visitor) {
   return visitor?.online !== false && visitor?.lat != null;
+}
+
+export async function publishOwnerPosition(locationId, position) {
+  if (!locationId || !position?.lat) return;
+  const payload = {
+    lat: position.lat,
+    lng: position.lng,
+    accuracy: position.accuracy ?? null,
+    altitude: position.altitude ?? null,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (isFirebaseConfigured && db) {
+    await setDoc(
+      doc(db, 'locations', locationId, 'status', 'owner'),
+      { ...payload, updatedAt: serverTimestamp() },
+      { merge: true }
+    );
+    return;
+  }
+
+  const store = readLocalStore();
+  store[`owner:${locationId}`] = payload;
+  writeLocalStore(store);
+  window.dispatchEvent(
+    new CustomEvent(TRACK_EVENT, { detail: { locationId, owner: true, ...payload } })
+  );
+}
+
+export function subscribeOwnerPosition(locationId, callback) {
+  if (!locationId) return () => {};
+
+  if (isFirebaseConfigured && db) {
+    return onSnapshot(
+      doc(db, 'locations', locationId, 'status', 'owner'),
+      (snap) => {
+        if (!snap.exists()) {
+          callback(null);
+          return;
+        }
+        const data = snap.data();
+        callback({
+          lat: data.lat,
+          lng: data.lng,
+          accuracy: data.accuracy ?? null,
+          altitude: data.altitude ?? null,
+          updatedAt: data.updatedAt?.toDate?.()?.toISOString?.() ?? data.updatedAt,
+        });
+      },
+      () => callback(null)
+    );
+  }
+
+  const read = () => {
+    const store = readLocalTrack();
+    callback(store[`owner:${locationId}`] ?? null);
+  };
+
+  const onCustom = (e) => {
+    if (e.detail?.locationId === locationId && e.detail?.owner) read();
+  };
+
+  window.addEventListener(TRACK_EVENT, onCustom);
+  window.addEventListener('storage', read);
+  const interval = setInterval(read, 1000);
+  read();
+
+  return () => {
+    window.removeEventListener(TRACK_EVENT, onCustom);
+    window.removeEventListener('storage', read);
+    clearInterval(interval);
+  };
 }
 
 function readLocalStore() {

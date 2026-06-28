@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import LiveMap from '../components/LiveMap';
 import GlassCard from '../components/GlassCard';
+import LocationSearch from '../components/LocationSearch';
 import QRCodeDisplay from '../components/QRCode';
 import OwnerVisitorAlert from '../components/OwnerVisitorAlert';
 import OwnerLiveTracker from '../components/OwnerLiveTracker';
@@ -24,9 +25,12 @@ import {
   resetAccountPublishThrottle,
   isDeviceStale,
 } from '../services/accountDevices';
-import { subscribeVisitorPosition, isVisitorOnline } from '../services/visitorTracking';
+import { subscribeVisitorPosition, isVisitorOnline, publishOwnerPosition } from '../services/visitorTracking';
 
 const RADIUS_OPTIONS = [
+  { label: '10m', value: 10 },
+  { label: '20m', value: 20 },
+  { label: '30m', value: 30 },
   { label: '50m', value: 50 },
   { label: '100m', value: 100 },
   { label: '250m', value: 250 },
@@ -48,7 +52,7 @@ export default function Owner() {
   const [ownerMode, setOwnerMode] = useState(null);
   const [lat, setLat] = useState(22.5726);
   const [lng, setLng] = useState(88.3639);
-  const [radius, setRadius] = useState(500);
+  const [radius, setRadius] = useState(50);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [expiration, setExpiration] = useState('never');
@@ -69,8 +73,9 @@ export default function Owner() {
   const { user, loading: authLoading, signInWithGoogle, logout } = useAuth();
   const { position: gpsPosition, fetchLocation, loading: gpsLoading, error: gpsError } =
     useCurrentLocation();
+  const geoEnabled = tracking || Boolean(shareUrl);
   const { position, error: geoError, loading: geoLoading, requestPermission } =
-    useGeolocation(tracking);
+    useGeolocation(geoEnabled);
 
   const isGoogleMode = ownerMode === 'google';
 
@@ -104,6 +109,18 @@ export default function Owner() {
     if (!shareId) return;
     return subscribeVisitorPosition(shareId, setLinkVisitor);
   }, [shareId]);
+
+  useEffect(() => {
+    if (!shareId || !position) return;
+    publishOwnerPosition(shareId, position).catch(() => {});
+  }, [shareId, position]);
+
+  useEffect(() => {
+    if (shareUrl && !tracking) {
+      requestPermission();
+      setTracking(true);
+    }
+  }, [shareUrl, tracking, requestPermission]);
 
   const visitorConnected = isVisitorOnline(linkVisitor);
 
@@ -369,7 +386,12 @@ export default function Owner() {
                 />
               ))}
 
-            <OwnerLiveTracker destination={savedDestination} visitorPos={linkVisitor} />
+            <OwnerLiveTracker
+              destination={savedDestination}
+              visitorPos={linkVisitor}
+              ownerPosition={position}
+              locationId={shareId}
+            />
 
             <OwnerVisitorAlert locationId={shareId} />
 
@@ -392,6 +414,12 @@ export default function Owner() {
           <div className="mt-6 space-y-6">
             <GlassCard>
               <p className="field-label mb-3">Pick destination</p>
+              <LocationSearch
+                onSelect={({ lat: searchLat, lng: searchLng }) => {
+                  setLat(searchLat);
+                  setLng(searchLng);
+                }}
+              />
               <LiveMap
                 destination={{ lat, lng }}
                 radiusMeters={radius}
@@ -410,6 +438,9 @@ export default function Owner() {
 
             <GlassCard>
               <p className="field-label mb-2">Radius</p>
+              <p className="mb-2 text-xs text-white/40">
+                Use 10–30 m for inside a building; larger for outdoor meetups.
+              </p>
               <div className="chip-row">
                 {RADIUS_OPTIONS.map(({ label, value }) => (
                   <button
